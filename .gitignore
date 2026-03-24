@@ -8,7 +8,7 @@ spk_identification_app/__pycache__/
 inspect_collection.py
 prepare_librispeech_data.py
 test_librispeech_data.py
-embedding_model/*.nemo
+speaker_rag/embedding_model/*.nemo
 whisper_model/
 gender_model/
-age_model/
+speaker_rag/age_model/
