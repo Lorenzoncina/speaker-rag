@@ -1,0 +1,14 @@
+new_venv/
+utils/
+exported_image/
+enrolled_data/
+enrollment_data/
+spk_identification_app/enrolled_data/
+spk_identification_app/__pycache__/
+inspect_collection.py
+prepare_librispeech_data.py
+test_librispeech_data.py
+embedding_model/*.nemo
+whisper_model/
+gender_model/
+age_model/

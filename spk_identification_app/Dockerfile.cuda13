@@ -1,0 +1,31 @@
+# Use the official PyTorch image with CUDA 13 support
+FROM pytorch/pytorch:2.9.0-cuda13.0-cudnn9-devel
+
+# Working directory
+WORKDIR /app
+
+# 1. Install System Dependencies
+# Note: python3 and pip are already included in this base image
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    libsndfile1 && \
+    rm -rf /var/lib/apt/lists/*
+
+# 2. Install Application Requirements
+# Use a requirements file that doesn't force cu12 versions
+COPY requirements-cuda13.txt /app/
+RUN pip install --no-cache-dir -r requirements-cuda13.txt
+
+# 3. Download Models
+COPY download_models.py /app/
+COPY age_model/age_probe.pt /app/age_model/
+RUN python download_models.py
+
+# 4. Copy Application Code
+COPY . /app
+
+# Expose port
+EXPOSE 8006
+
+# Start Server
+CMD ["gunicorn", "--config", "gunicorn_conf.py", "endpoints:app"]
