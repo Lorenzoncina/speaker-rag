@@ -35,6 +35,21 @@ def startup_event():
 def health_check():
     return {"status": "Service is running", "models_loaded": rag_system is not None}
 
+@app.delete("/rag/clear", tags=["RAG"])
+async def clear_database():
+    """Completely wipes the ChromaDB vector database of all enrolled speakers."""
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+    
+    try:
+        result = rag_system.clear_database()
+        if result["status"] == "success":
+            return {"message": result["message"]}
+        else:
+            return JSONResponse(status_code=500, content={"error": result["message"]})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 @app.post("/rag/index", tags=["RAG"])
 async def rag_index_speaker(
     audios: List[UploadFile] = File(...),

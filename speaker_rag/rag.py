@@ -26,6 +26,14 @@ class SpeakerRAG:
         print(f"Loading LLM ({llm_model_id}) into memory...")
         self.llm = pipeline("text-generation", model=llm_model_id, device_map="auto")
         print("SpeakerRAG initialization complete. All models ready.")
+    
+    def clear_database(self) -> dict:
+        """Clears all stored speakers from the vector database."""
+        success = self.audio_service.clear_collection()
+        if success:
+            return {"status": "success", "message": "Vector database cleared successfully."}
+        else:
+            return {"status": "error", "message": "Failed to clear the database. Check server logs."}
 
     def index_audio(self, audio_paths: List[str], user_ids: List[str] = None, session_id: str = "rag_session") -> dict:
         """

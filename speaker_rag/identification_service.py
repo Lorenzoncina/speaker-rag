@@ -71,6 +71,23 @@ class _Identification_Service:
     _chroma_client = None
     _collection = None
 
+    def clear_collection(self) -> bool:
+        """Deletes the current collection and recreates an empty one."""
+        try:
+            collection_name = self._collection.name
+            # Delete the existing collection to wipe all embeddings
+            self._chroma_client.delete_collection(collection_name)
+            # Recreate an empty collection with the same parameters
+            self._collection = self._chroma_client.get_or_create_collection(
+                name=collection_name, 
+                metadata={"hnsw:space": "cosine"}
+            )
+            print(f"Collection '{collection_name}' successfully cleared.")
+            return True
+        except Exception as e:
+            print(f"Failed to clear collection: {e}")
+            return False
+
     def compute_embeddings(self, wavlist):
         """
         This function only compute the Speaker embedding using Titanet on the input audio files corresponding to a certain User.
