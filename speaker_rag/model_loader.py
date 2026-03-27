@@ -9,7 +9,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def load_audio_models(
     device: str,
-   titanet_dir=os.path.join(CURRENT_DIR, "embedding_model"),
+    titanet_dir=os.path.join(CURRENT_DIR, "embedding_model"),
     titanet_name="titanet_large",
     whisper_dir=os.path.join(CURRENT_DIR, "whisper_model"),
     whisper_name="openai/whisper-tiny",

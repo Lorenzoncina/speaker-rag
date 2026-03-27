@@ -94,7 +94,7 @@ class _Identification_Service:
         
         Parameters:
         ----------
-        wavlist (list): list of audio paths for which the fucntion computes embeddings
+        wavlist (list): list of audio paths for which the function computes embeddings
         """
         for i,wav in enumerate(wavlist):
             x, sr =librosa.load(wav,sr=16000,mono=True)
@@ -108,16 +108,16 @@ class _Identification_Service:
     def extract_audio_attributes(self, audio_path: str) -> Dict[str, Any]:
         """
         Extracts language from an audio file using Whisper.
-        Gender and age are placeholders for future implementation.
+        Age extimation with a custom trained classifier and Gender classification with a Wav2vec finetuned model (from HF)
         """
         try:
             waveform, sr = librosa.load(audio_path, sr=16000, mono=True)
         except Exception as e:
             print(f"Failed to load audio file {audio_path}: {e}")
             return {
-                "gender": "unavailable", "gender_confidence": 0.0,
+                "gender": "error", "gender_confidence": 0.0,
                 "language": "error", "language_confidence": 0.0,
-                "age": "unavailable", "age_confidence": 0.0
+                "age": "error", "age_confidence": 0.0
             }
 
         # --- 1. Whisper-based Features (Age & Language) ---
@@ -212,7 +212,6 @@ class _Identification_Service:
         """
         Computes embeddings and saves them to ChromaDB with specific metadata tags.
         Returns the attributes AND the generated ChromaDB ID for each file.
-        Attributes are currelty not saved in the Chroma collection metadata, just treturned.
         
         Parameters:
         - data_type: "enroll" or "probe"
