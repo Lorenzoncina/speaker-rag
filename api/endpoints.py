@@ -27,7 +27,7 @@ def startup_event():
     rag_system = SpeakerRAG(
         chroma_dir="./enrolled_data/chroma",
         collection_name="speaker_embeddings",
-        llm_model_id="Qwen/Qwen2.5-1.5B-Instruct",
+        llm_model_id="Qwen/Qwen2-Audio-7B-Instruct",
         device=device
     )
 
@@ -74,6 +74,31 @@ async def rag_index_speaker(
             result = rag_system.index_audio(audio_paths=tmp_paths, user_ids=user_ids)
             return result
             
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/llm/direct", tags=["LLM"])
+async def direct_llm_query(
+    audios: List[UploadFile] = File(...),
+    question: str = Form(..., description="Ask the LLM directly about the audio.")
+):
+    """Passes audio directly to Qwen-Audio without hitting the Vector DB."""
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_paths = []
+            for audio in audios:
+                tmp_path = os.path.join(tmpdir, audio.filename)
+                with open(tmp_path, "wb") as f:
+                    shutil.copyfileobj(audio.file, f)
+                tmp_paths.append(tmp_path)
+
+            answer = rag_system.direct_query(audio_paths=tmp_paths, question=question)
+            
+            return {"question": question, "answer": answer}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 

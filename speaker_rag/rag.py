@@ -1,7 +1,9 @@
 import os
 import uuid
+import torch
+import librosa
 from typing import List, Dict
-from transformers import pipeline
+from transformers import AutoProcessor, Qwen2AudioForConditionalGeneration, BitsAndBytesConfig
 
 from .model_loader import load_audio_models
 from .identification_service import Identification_Service
@@ -10,7 +12,7 @@ class SpeakerRAG:
     def __init__(self, 
                  chroma_dir: str = "./enrolled_data/chroma", 
                  collection_name: str = "speaker_embeddings",
-                 llm_model_id: str = "Qwen/Qwen2.5-1.5B-Instruct", 
+                 llm_model_id: str = "Qwen/Qwen2-Audio-7B-Instruct", 
                  device: str = "cuda"):
         """Initializes the Speaker RAG system."""
         print(f"Initializing SpeakerRAG on device: {device}...")
@@ -24,7 +26,19 @@ class SpeakerRAG:
         )
         
         print(f"Loading LLM ({llm_model_id}) into memory...")
-        self.llm = pipeline("text-generation", model=llm_model_id, device_map="auto")
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.float16
+        )
+        
+        self.processor = AutoProcessor.from_pretrained(llm_model_id)
+        self.llm = Qwen2AudioForConditionalGeneration.from_pretrained(
+            llm_model_id, 
+            device_map="auto",
+            quantization_config=bnb_config if device == "cuda" else None
+        )
+        self.device = device
+        print("SpeakerRAG initialization complete. All models ready.")
         print("SpeakerRAG initialization complete. All models ready.")
     
     def clear_database(self) -> dict:
@@ -111,45 +125,76 @@ class SpeakerRAG:
             
         return "\n".join(context_lines)
 
+    def _prepare_qwen_audio_inputs(self, audio_paths: List[str], text_prompt: str):
+        """Helper to format text and audio for Qwen2-Audio."""
+        content = []
+        raw_audios = []
+        
+        for i, path in enumerate(audio_paths):
+            content.append({"type": "audio", "audio_url": f"audio_{i}"})
+            # Qwen2-Audio expects audio sampled at its feature extractor's rate (usually 16000)
+            sr = self.processor.feature_extractor.sampling_rate
+            audio_array, _ = librosa.load(path, sr=sr)
+            raw_audios.append(audio_array)
+            
+        content.append({"type": "text", "text": text_prompt})
+        
+        conversation = [{"role": "user", "content": content}]
+        text = self.processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
+        
+        inputs = self.processor(
+            text=text, 
+            audio=raw_audios, 
+            return_tensors="pt", 
+            padding=True
+        ).to(self.llm.device)
+        
+        return inputs
+
+    def direct_query(self, audio_paths: List[str], question: str) -> str:
+        """Directly asks the Multimodal LLM about the audio (No RAG)."""
+        prompt = f"Please listen to the provided audio files and answer the following question: {question}"
+        
+        inputs = self._prepare_qwen_audio_inputs(audio_paths, prompt)
+        
+        generated_ids = self.llm.generate(**inputs, max_new_tokens=256, temperature=0.3)
+        generated_ids = generated_ids[:, inputs.input_ids.size(1):]
+        response = self.processor.batch_decode(generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+        return response
+
     def query(self, audio_paths: List[str], question: str, session_id: str = "rag_session") -> str:
-        """Identifies multiple unknown audio files and asks the LLM about them."""
-        # Use a temporary speaker ID to group the probe files
+        """Identifies audio files using backend models, then passes audio + context to LLM."""
+        # 1. RAG Backend Processing
         temp_speaker_id = str(uuid.uuid4())
         audio_map = {temp_speaker_id: audio_paths}
         
         extraction_results = self.audio_service.extract_attributes(
-            user_audios_map=audio_map,
-            data_type="probe",
-            session_id=session_id
+            user_audios_map=audio_map, data_type="probe", session_id=session_id
         )
-        
         chroma_ids = [res["id"] for res in extraction_results.get(temp_speaker_id, [])]
 
         raw_results = self.audio_service.identify_by_id(
-            query_ids=chroma_ids,
-            top_k=3,
-            session_id=session_id,
-            probe_only=False
+            query_ids=chroma_ids, top_k=3, session_id=session_id, probe_only=False
         )
-
         context = self._format_results_for_llm(raw_results)
         
+        # 2. Multimodal LLM Processing
         prompt = f"""You are an intelligent audio-analysis assistant. 
-                    Based on the following backend speaker recognition results, answer the user's question.
+                Listen to the provided audio recordings and read the backend speaker recognition results below. 
+                Combine your own audio understanding with the backend metadata to answer the user's question.
 
-                    ### Backend Audio Analysis Results:
-                    {context}
+                ### Backend Audio Analysis Results:
+                {context}
 
-                    ### User Question:
-                    {question}
+                ### User Question:
+                {question}
 
-                    ### Answer:"""
+                ### Answer:"""
 
-        outputs = self.llm(
-            prompt, 
-            max_new_tokens=200, 
-            return_full_text=False,
-            temperature=0.3
-        )
+        inputs = self._prepare_qwen_audio_inputs(audio_paths, prompt)
         
-        return outputs[0]["generated_text"].strip()
+        generated_ids = self.llm.generate(**inputs, max_new_tokens=256, temperature=0.3)
+        generated_ids = generated_ids[:, inputs.input_ids.size(1):]
+        response = self.processor.batch_decode(generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+        
+        return response
