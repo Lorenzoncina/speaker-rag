@@ -4,7 +4,7 @@ import requests
 
 # --- Configuration ---
 # Point this to where your endpoints.py FastAPI server is running
-FASTAPI_URL = "http://0.0.0.0:8006"
+FASTAPI_URL = "http://0.0.0.0:8007"
 
 # ==========================================
 # Tab 1: Direct LLM Functions (No RAG)

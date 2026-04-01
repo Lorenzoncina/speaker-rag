@@ -1,4 +1,4 @@
-bind = "0.0.0.0:8006"
+bind = "0.0.0.0:8007"
 workers = 1
 worker_class = "uvicorn.workers.UvicornWorker"
 timeout = 3000  # allow long uploads
