@@ -75,9 +75,10 @@ async def rag_index_speaker(
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_paths = []
             
-            # Save files to disk preserving original filenames
-            for audio in audios:
-                tmp_path = os.path.join(tmpdir, audio.filename)
+            # THE FIX: Apply safe filenames to enrollment so we don't lose training data!
+            for i, audio in enumerate(audios):
+                safe_filename = f"{i}_{audio.filename}"
+                tmp_path = os.path.join(tmpdir, safe_filename)
                 with open(tmp_path, "wb") as f:
                     shutil.copyfileobj(audio.file, f)
                 tmp_paths.append(tmp_path)
@@ -102,8 +103,11 @@ async def direct_llm_query(
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_paths = []
-            for audio in audios:
-                tmp_path = os.path.join(tmpdir, audio.filename)
+            
+            # THE FIX: Apply safe filenames to the baseline test too!
+            for i, audio in enumerate(audios):
+                safe_filename = f"{i}_{audio.filename}"
+                tmp_path = os.path.join(tmpdir, safe_filename)
                 with open(tmp_path, "wb") as f:
                     shutil.copyfileobj(audio.file, f)
                 tmp_paths.append(tmp_path)
@@ -126,19 +130,21 @@ async def rag_ask_question(
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_paths = []
-            for audio in audios:
-                tmp_path = os.path.join(tmpdir, audio.filename)
+            for i, audio in enumerate(audios):
+                # Prepend the index so files with the same name don't overwrite each other!
+                safe_filename = f"{i}_{audio.filename}"
+                tmp_path = os.path.join(tmpdir, safe_filename)
+                
                 with open(tmp_path, "wb") as f:
                     shutil.copyfileobj(audio.file, f)
                 tmp_paths.append(tmp_path)
 
-            # Unpack both variables here
             answer, context = rag_system.query(audio_paths=tmp_paths, question=question)
             
             return {
                 "question": question, 
                 "answer": answer,
-                "context": context,  # Pass it back to Gradio!
+                "context": context,
                 "timestamp": datetime.utcnow().isoformat()
             }
     except Exception as e:

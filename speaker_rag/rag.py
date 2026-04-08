@@ -137,75 +137,97 @@ class SpeakerRAG:
 
     def query(self, audio_paths: List[str], question: str) -> str:
         """Dual Retrieval: Independent Resolution for multiple files with auto-cleanup."""
-        # 1. Generate a strictly unique session ID for THIS specific query
         session_id = f"session_{uuid.uuid4()}"
         
-        # 2. Treat EVERY file as a unique unknown person initially
         audio_map = {}
         for path in audio_paths:
             audio_map[str(uuid.uuid4())] = [path]
             
-        # Extract attributes and embed all files
         extraction_results = self.audio_service.extract_attributes(
             user_audios_map=audio_map, data_type="probe", session_id=session_id
         )
         
-        # Flatten all generated Chroma IDs for the search
         chroma_ids = []
+        id_to_path = {}
         for uid, results in extraction_results.items():
             for res in results:
                 chroma_ids.append(res["id"])
+                id_to_path[res["id"]] = res["filepath"]
 
-        # 3. Identify / Resolve
         raw_id_results = self.audio_service.identify_by_id(
             query_ids=chroma_ids, top_k=5, session_id=session_id, probe_only=False
         )
 
         context_lines = ["=== FACT SHEET: AUDIO FILE RESOLUTION ==="]
-        identified_users = set() # <-- NEW: Keeps track of who we find in the audio
+        identified_users = set() 
+        SIMILARITY_THRESHOLD = 0.65 
         
         for result in raw_id_results:
-            file_name = os.path.basename(result.get("probe_metadata", {}).get("audio_file", "Unknown File"))
+            query_id = result["query_id"]
+            filepath = id_to_path.get(query_id, "")
+            
+            raw_file_name = os.path.basename(filepath) if filepath else "Unknown File"
+            file_name = raw_file_name.split("_", 1)[-1] if "_" in raw_file_name else raw_file_name
+            
+            try:
+                audio_index = audio_paths.index(filepath) + 1 
+            except ValueError:
+                audio_index = "?"
+
+            context_lines.append(f"--- Audio Track {audio_index} (File: {file_name}) ---")
+
             matches = result.get("matches", [])
             
-            context_lines.append(f"--- File: {file_name} ---")
+            # 1. Filter out exact self-matches
+            valid_matches = [m for m in matches if m.get("score", 0) < 0.99]
             
-            if not matches:
-                context_lines.append("Identity: UNKNOWN (No matches found)")
-            else:
-                # Prioritize 'enroll' data to find named users
-                enrolled_matches = [m for m in matches if m.get("metadata", {}).get("data_type") == "enroll"]
+            # 2. Apply Threshold
+            candidates = [m for m in valid_matches if m.get("score", 0) >= SIMILARITY_THRESHOLD]
+            
+            best_match = None
+            if candidates:
+                # THE FIX: Separate enrolled users from anonymous probes
+                enrolled_candidates = [m for m in candidates if m.get("metadata", {}).get("data_type") == "enroll"]
+                probe_candidates = [m for m in candidates if m.get("metadata", {}).get("data_type") == "probe"]
                 
-                if enrolled_matches:
-                    top_match = enrolled_matches[0]
-                    meta = top_match.get("metadata", {})
-                    identity = meta.get('user_id', 'Unknown')
-                    
-                    if identity != 'Unknown':
-                        identified_users.add(identity) # Add enrolled user to our filter list
+                # Prioritize Enrolled users over Probes!
+                if enrolled_candidates:
+                    enrolled_candidates = sorted(enrolled_candidates, key=lambda x: x.get("score", 0), reverse=True)
+                    best_match = enrolled_candidates[0]
+                elif probe_candidates:
+                    probe_candidates = sorted(probe_candidates, key=lambda x: x.get("score", 0), reverse=True)
+                    best_match = probe_candidates[0]
+            
+            if best_match:
+                meta = best_match.get("metadata", {})
+                data_type = meta.get("data_type")
+                match_uid = meta.get("user_id", "Unknown")
+                
+                if data_type == "enroll":
+                    identity = match_uid
                 else:
-                    # If no enrolled matches, it matched ANOTHER probe in this exact upload batch!
-                    top_match = matches[0]
-                    meta = top_match.get("metadata", {})
+                    # Successfully grouped with an unknown probe (Diarization)
+                    identity = f"Unknown_Speaker_{str(match_uid)[:8]}"
                     
-                    # Label it uniquely so the LLM knows these files belong to the same unknown person
-                    raw_uid = meta.get('user_id')
-                    identity = f"Unknown_Speaker_{str(raw_uid)[:8]}"
-                    
-                    if raw_uid:
-                        identified_users.add(raw_uid) # Add temporary user to our filter list
+                identified_users.add(match_uid)
+                age = meta.get("age", "Unknown")
+                gender = meta.get("gender", "Unknown")
+                language = meta.get("language", "Unknown")
+            else:
+                identity = "UNIDENTIFIED SPEAKER"
+                age = "Unknown"
+                gender = "Unknown"
+                language = "Unknown"
                 
-                context_lines.append(f"Identity: {identity}")
-                context_lines.append(f"Age Bracket: {meta.get('age', 'Unknown')}")
-                context_lines.append(f"Gender: {meta.get('gender', 'Unknown')}")
-                context_lines.append(f"Language: {meta.get('language', 'Unknown')}")
+            context_lines.append(f"Identity: {identity}")
+            context_lines.append(f"Age Bracket: {age}")
+            context_lines.append(f"Gender: {gender}")
+            context_lines.append(f"Language: {language}")
         
         context_lines.append("")
 
-        # 4. Semantic Search (Filtered by Identity)
         context_lines.append("=== FACT SHEET: RELEVANT PAST STATEMENTS ===")
         
-        #Pass the identified_users list to the semantic search to filter out everyone else
         semantic_matches = self.semantic_service.search_by_text(
             query_text=question, 
             top_k=3, 
@@ -223,17 +245,16 @@ class SpeakerRAG:
 
         final_context = "\n".join(context_lines)
 
-        # 5. Ask LLM
         prompt = f"""You are a strict data-reporting AI performing Speaker Resolution. 
+                You are receiving {len(audio_paths)} distinct audio tracks.
                 You must answer the User Question using strictly the FACT SHEET data provided below. 
 
                 {final_context}
 
                 CRITICAL RULES:
-                1. If the user asks who is speaking in the files, state the "Identity" for each file. 
-                2. If multiple files share the same "Unknown_Speaker" identity, explicitly state that those files contain the same person.
-                3. Do not invent names for Unknown_Speakers.
-                4. If asked about past statements, ONLY use the quotes provided in the FACT SHEET.
+                1. Map your audio inputs directly to the "Audio Track" numbers in the FACT SHEET.
+                2. If the user asks who is speaking, list the Identity for EVERY Audio Track individually. 
+                3. If multiple tracks share the same identity, explicitly state that those tracks contain the same person.
 
                 ### User Question:
                 {question}
@@ -246,7 +267,6 @@ class SpeakerRAG:
         generated_ids = generated_ids[:, inputs.input_ids.size(1):]
         response = self.processor.batch_decode(generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         
-        # 6. CRITICAL: Cleanup the database! Delete all probes from this session.
         self.audio_service.delete_session(session_id)
         
         return response, final_context
