@@ -162,6 +162,7 @@ class SpeakerRAG:
         )
 
         context_lines = ["=== FACT SHEET: AUDIO FILE RESOLUTION ==="]
+        identified_users = set() # <-- NEW: Keeps track of who we find in the audio
         
         for result in raw_id_results:
             file_name = os.path.basename(result.get("probe_metadata", {}).get("audio_file", "Unknown File"))
@@ -179,12 +180,20 @@ class SpeakerRAG:
                     top_match = enrolled_matches[0]
                     meta = top_match.get("metadata", {})
                     identity = meta.get('user_id', 'Unknown')
+                    
+                    if identity != 'Unknown':
+                        identified_users.add(identity) # Add enrolled user to our filter list
                 else:
                     # If no enrolled matches, it matched ANOTHER probe in this exact upload batch!
                     top_match = matches[0]
                     meta = top_match.get("metadata", {})
+                    
                     # Label it uniquely so the LLM knows these files belong to the same unknown person
-                    identity = f"Unknown_Speaker_{meta.get('user_id')[:8]}"
+                    raw_uid = meta.get('user_id')
+                    identity = f"Unknown_Speaker_{str(raw_uid)[:8]}"
+                    
+                    if raw_uid:
+                        identified_users.add(raw_uid) # Add temporary user to our filter list
                 
                 context_lines.append(f"Identity: {identity}")
                 context_lines.append(f"Age Bracket: {meta.get('age', 'Unknown')}")
@@ -193,11 +202,19 @@ class SpeakerRAG:
         
         context_lines.append("")
 
-        # 4. Semantic Search
+        # 4. Semantic Search (Filtered by Identity)
         context_lines.append("=== FACT SHEET: RELEVANT PAST STATEMENTS ===")
-        semantic_matches = self.semantic_service.search_by_text(query_text=question, top_k=3, session_id=session_id)
+        
+        #Pass the identified_users list to the semantic search to filter out everyone else
+        semantic_matches = self.semantic_service.search_by_text(
+            query_text=question, 
+            top_k=3, 
+            session_id=session_id,
+            target_user_ids=list(identified_users) if identified_users else None 
+        )
+        
         if not semantic_matches:
-            context_lines.append("No relevant past statements found.")
+            context_lines.append("No relevant past statements found for the identified speaker(s).")
         else:
             for match in semantic_matches:
                 meta = match.get("metadata", {})
@@ -208,19 +225,20 @@ class SpeakerRAG:
 
         # 5. Ask LLM
         prompt = f"""You are a strict data-reporting AI performing Speaker Resolution. 
-                    You must answer the User Question using strictly the FACT SHEET data provided below. 
+                You must answer the User Question using strictly the FACT SHEET data provided below. 
 
-                    {final_context}
+                {final_context}
 
-                    CRITICAL RULES:
-                    1. If the user asks who is speaking in the files, state the "Identity" for each file. 
-                    2. If multiple files share the same "Unknown_Speaker" identity, explicitly state that those files contain the same person.
-                    3. Do not invent names for Unknown_Speakers.
+                CRITICAL RULES:
+                1. If the user asks who is speaking in the files, state the "Identity" for each file. 
+                2. If multiple files share the same "Unknown_Speaker" identity, explicitly state that those files contain the same person.
+                3. Do not invent names for Unknown_Speakers.
+                4. If asked about past statements, ONLY use the quotes provided in the FACT SHEET.
 
-                    ### User Question:
-                    {question}
+                ### User Question:
+                {question}
 
-                    ### Answer:"""
+                ### Answer:"""
 
         inputs = self._prepare_qwen_audio_inputs(audio_paths, prompt)
         

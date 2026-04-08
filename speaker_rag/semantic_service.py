@@ -51,13 +51,13 @@ class _Semantic_Service:
         except Exception as e:
             print(f"Failed to index transcriptions into Semantic DB: {e}")
 
-    def search_by_text(self, query_text: str, top_k: int = 3, session_id: str = None) -> List[Dict[str, Any]]:
-        """Searches the semantic database for the closest matching transcriptions to the query text."""
+    def search_by_text(self, query_text: str, top_k: int = 3, session_id: str = None, target_user_ids: List[str] = None) -> List[Dict[str, Any]]:
+        """Searches the semantic database, optionally filtering by specific user IDs."""
         try:
             query_embedding = self._model.encode([query_text]).tolist()
             
-            # We want to search enrolled data + probe data from this session
-            where_filter = {
+            # Base filter (Ensure we don't grab ghost probes from other sessions)
+            base_filter = {
                 "$or": [
                     {"data_type": "enroll"},
                     {
@@ -68,6 +68,23 @@ class _Semantic_Service:
                     }
                 ]
             }
+
+            # If we know who is speaking, apply a Metadata Filter!
+            if target_user_ids and len(target_user_ids) > 0:
+                # If only one speaker, use standard match. If multiple, use $in operator.
+                if len(target_user_ids) == 1:
+                    user_filter = {"user_id": target_user_ids[0]}
+                else:
+                    user_filter = {"user_id": {"$in": target_user_ids}}
+                    
+                where_filter = {
+                    "$and": [
+                        base_filter,
+                        user_filter
+                    ]
+                }
+            else:
+                where_filter = base_filter
 
             results = self._collection.query(
                 query_embeddings=query_embedding,
