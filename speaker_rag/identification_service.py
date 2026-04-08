@@ -369,6 +369,41 @@ class _Identification_Service:
             print(f"Identification failed: {e}")
             return []
 
+    def get_all_enrolled_users(self) -> Dict[str, Any]:
+        """Fetches all enrolled users and their extracted attributes from ChromaDB."""
+        try:
+            results = self._collection.get(
+                where={"data_type": "enroll"},
+                include=["metadatas"]
+            )
+            users = {}
+            if results and results.get("metadatas"):
+                for meta in results["metadatas"]:
+                    uid = meta.get("user_id", "Unknown")
+                    if uid not in users:
+                        users[uid] = {
+                            "age": meta.get("age", "unknown"),
+                            "gender": meta.get("gender", "unknown"),
+                            "language": meta.get("language", "unknown"),
+                            "audio_files": []
+                        }
+                    # Keep track of the files associated with this user
+                    filename = meta.get("audio_file", "").split("/")[-1]
+                    if filename and filename not in users[uid]["audio_files"]:
+                        users[uid]["audio_files"].append(filename)
+            return users
+        except Exception as e:
+            print(f"Failed to fetch enrolled users: {e}")
+            return {}
+
+    def delete_session(self, session_id: str):
+        """Deletes all temporary probe embeddings for a given session to prevent DB pollution."""
+        try:
+            self._collection.delete(where={"session_id": session_id})
+            print(f"Cleaned up temporary session: {session_id}")
+        except Exception as e:
+            print(f"Failed to clean up session {session_id}: {e}")
+
 
 
 def Identification_Service(embedding_model, language_processor, language_model, gender_processor, gender_model, age_model, device, chroma_client, collection_name):

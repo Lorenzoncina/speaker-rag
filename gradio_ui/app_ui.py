@@ -3,9 +3,7 @@ import gradio as gr
 import requests
 
 # --- Configuration ---
-#FASTAPI_URL = "http://0.0.0.0:8006" 
-FASTAPI_URL = "http://127.0.0.1:8006" #fbk server (requires SSH Port Forwarding )
-
+FASTAPI_URL = "http://127.0.0.1:8006" #fbk server (requires SSH Port Forwarding)
 
 # ==========================================
 # Tab 1: Direct LLM Functions (No RAG)
@@ -59,9 +57,35 @@ def enroll_rag(audio_paths, user_ids):
     except Exception as e:
         return f"An error occurred: {str(e)}"
 
+def list_enrolled_users():
+    """Fetches and formats the list of all enrolled users."""
+    try:
+        response = requests.get(f"{FASTAPI_URL}/rag/enrolled")
+        if response.status_code == 200:
+            res_json = response.json()
+            users = res_json.get("enrolled_users", {})
+            
+            if not users:
+                return "No users are currently enrolled in the database."
+            
+            lines = [f"📊 Total Enrolled Users: {len(users)}\n" + "-"*45]
+            for uid, attrs in users.items():
+                files = ", ".join(attrs.get("audio_files", []))
+                lines.append(f"👤 User ID: {uid}")
+                lines.append(f"   ➤ Attributes: {attrs.get('age')} | {attrs.get('gender')} | {attrs.get('language')}")
+                lines.append(f"   ➤ Source Files: {files}\n")
+            
+            return "\n".join(lines)
+        else:
+            return f"Error {response.status_code}:\n{response.text}"
+    except requests.exceptions.ConnectionError:
+        return f"Connection Error: Is the FastAPI backend running on {FASTAPI_URL}?"
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
+
 def ask_rag(audio_paths, question):
     if not audio_paths:
-        return "Please upload probe audio files."
+        return "Please upload probe audio files.", ""
     
     files = [('audios', (os.path.basename(path), open(path, 'rb'), 'audio/wav')) for path in audio_paths]
     data = {'question': question}
@@ -70,14 +94,20 @@ def ask_rag(audio_paths, question):
         response = requests.post(f"{FASTAPI_URL}/rag/ask", files=files, data=data)
         if response.status_code == 200:
             res_json = response.json()
-            # The backend returns a dictionary containing 'answer', 'question', and 'timestamp'
-            return res_json.get('answer', str(res_json))
+            
+            # The backend now returns both the LLM's answer and the injected context
+            answer = res_json.get('answer', "No answer received from the LLM.")
+            context = res_json.get('context', "No context provided by the backend.")
+            
+            return answer, context
+            
         else:
-            return f"Error {response.status_code}:\n{response.text}"
+            return f"Error {response.status_code}:\n{response.text}", "Error fetching context."
+            
     except requests.exceptions.ConnectionError:
-        return f"Connection Error: Is the FastAPI backend running on {FASTAPI_URL}?"
+        return f"Connection Error: Is the FastAPI backend running on {FASTAPI_URL}?", ""
     except Exception as e:
-        return f"An error occurred: {str(e)}"
+        return f"An error occurred: {str(e)}", ""
 
 def clear_rag():
     try:
@@ -90,7 +120,6 @@ def clear_rag():
         return f"Connection Error: Is the FastAPI backend running on {FASTAPI_URL}?"
     except Exception as e:
         return f"An error occurred: {str(e)}"
-
 
 # ==========================================
 # Gradio UI Layout
@@ -138,12 +167,14 @@ with gr.Blocks(title="Speaker Identification & Resolution Demo", theme=gr.themes
                         )
                         with gr.Row():
                             enroll_btn = gr.Button("Enroll to RAG")
+                            list_btn = gr.Button("Show Enrolled Users", variant="secondary")
                             clear_btn = gr.Button("Clear Entire Database", variant="stop")
                     
                     with gr.Column():
-                        enroll_output = gr.Textbox(label="Enrollment / Database Status", lines=6)
+                        enroll_output = gr.Textbox(label="Enrollment / Database Status", lines=10)
                 
                 enroll_btn.click(fn=enroll_rag, inputs=[enroll_audio, enroll_ids], outputs=enroll_output)
+                list_btn.click(fn=list_enrolled_users, inputs=[], outputs=enroll_output)
                 clear_btn.click(fn=clear_rag, inputs=[], outputs=enroll_output)
                 
             with gr.Accordion("🔍 Step 2: Query / Probe Audio", open=True):
@@ -158,9 +189,11 @@ with gr.Blocks(title="Speaker Identification & Resolution Demo", theme=gr.themes
                         rag_btn = gr.Button("Ask RAG Pipeline", variant="primary")
                     
                     with gr.Column():
-                        rag_output = gr.Textbox(label="RAG Pipeline Response", lines=12)
+                        rag_output = gr.Textbox(label="LLM Response", lines=6)
+                        with gr.Accordion("⚙️ View Backend Context (Debug)", open=False):
+                            rag_context = gr.Textbox(label="RAG Context Passed to LLM", lines=15)
                         
-                rag_btn.click(fn=ask_rag, inputs=[rag_audio, rag_question], outputs=rag_output)
+                rag_btn.click(fn=ask_rag, inputs=[rag_audio, rag_question], outputs=[rag_output, rag_context])
 
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860)

@@ -29,7 +29,6 @@ class SpeakerRAG:
             collection_name=collection_name
         )
         
-        # NEW: Initialize Semantic Service
         self.semantic_service = Semantic_Service(
             semantic_model=semantic_model,
             chroma_client=chroma_dir,
@@ -136,92 +135,87 @@ class SpeakerRAG:
         response = self.processor.batch_decode(generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         return response
 
-    def query(self, audio_paths: List[str], question: str, session_id: str = "rag_session") -> str:
-        """Dual Retrieval: Uses Audio Probes to identify voices AND Question to find text."""
-        # -----------------------------
-        # 1. Audio Probe Retrieval (Voice Similarity)
-        # -----------------------------
-        temp_speaker_id = str(uuid.uuid4())
-        audio_map = {temp_speaker_id: audio_paths}
+    def query(self, audio_paths: List[str], question: str) -> str:
+        """Dual Retrieval: Independent Resolution for multiple files with auto-cleanup."""
+        # 1. Generate a strictly unique session ID for THIS specific query
+        session_id = f"session_{uuid.uuid4()}"
         
-        # Extract attributes and embeddings for the probe audio
+        # 2. Treat EVERY file as a unique unknown person initially
+        audio_map = {}
+        for path in audio_paths:
+            audio_map[str(uuid.uuid4())] = [path]
+            
+        # Extract attributes and embed all files
         extraction_results = self.audio_service.extract_attributes(
             user_audios_map=audio_map, data_type="probe", session_id=session_id
         )
-        chroma_ids = [res["id"] for res in extraction_results.get(temp_speaker_id, [])]
+        
+        # Flatten all generated Chroma IDs for the search
+        chroma_ids = []
+        for uid, results in extraction_results.items():
+            for res in results:
+                chroma_ids.append(res["id"])
 
-        # Search the database for voice matches
+        # 3. Identify / Resolve
         raw_id_results = self.audio_service.identify_by_id(
-            query_ids=chroma_ids, top_k=3, session_id=session_id, probe_only=False
+            query_ids=chroma_ids, top_k=5, session_id=session_id, probe_only=False
         )
 
-        context_lines = ["### [1] SPEAKER IDENTIFICATION MATCHES (Based on Voice Similiarity)"]
+        context_lines = ["=== FACT SHEET: AUDIO FILE RESOLUTION ==="]
+        
         for result in raw_id_results:
             file_name = os.path.basename(result.get("probe_metadata", {}).get("audio_file", "Unknown File"))
             matches = result.get("matches", [])
             
+            context_lines.append(f"--- File: {file_name} ---")
+            
             if not matches:
-                context_lines.append(f"Probe: {file_name} -> No voice matches found.")
+                context_lines.append("Identity: UNKNOWN (No matches found)")
             else:
-                matched_ids = [m["chroma_id"] for m in matches]
-                # Get the transcriptions of the matched identities from the Semantic DB
-                transcripts_dict = self.semantic_service.get_texts_by_ids(matched_ids)
+                # Prioritize 'enroll' data to find named users
+                enrolled_matches = [m for m in matches if m.get("metadata", {}).get("data_type") == "enroll"]
                 
-                context_lines.append(f"--- Probe File: {file_name} ---")
-                for i, match in enumerate(matches):
-                    score = match.get("score", 0.0)
-                    meta = match.get("metadata", {})
-                    
-                    # Extract Attributes carefully
-                    speaker_id = meta.get("user_id", "Unknown") 
-                    age = meta.get("age", "unknown age")
-                    gender = meta.get("gender", "unknown gender")
-                    language = meta.get("language", "unknown language")
-                    transcription = transcripts_dict.get(match["chroma_id"], "[No transcription available]")
-                    
-                    context_lines.append(
-                        f"  Match #{i+1}: Speaker '{speaker_id}' (Voice Similarity: {score:.2f}). "
-                        f"Attributes: {age} {gender} speaking {language}. "
-                        f"What they previously said: \"{transcription}\""
-                    )
-                context_lines.append("")
+                if enrolled_matches:
+                    top_match = enrolled_matches[0]
+                    meta = top_match.get("metadata", {})
+                    identity = meta.get('user_id', 'Unknown')
+                else:
+                    # If no enrolled matches, it matched ANOTHER probe in this exact upload batch!
+                    top_match = matches[0]
+                    meta = top_match.get("metadata", {})
+                    # Label it uniquely so the LLM knows these files belong to the same unknown person
+                    identity = f"Unknown_Speaker_{meta.get('user_id')[:8]}"
+                
+                context_lines.append(f"Identity: {identity}")
+                context_lines.append(f"Age Bracket: {meta.get('age', 'Unknown')}")
+                context_lines.append(f"Gender: {meta.get('gender', 'Unknown')}")
+                context_lines.append(f"Language: {meta.get('language', 'Unknown')}")
+        
+        context_lines.append("")
 
-        # -----------------------------
-        # 2. Semantic Question Retrieval (Text Similarity)
-        # -----------------------------
-        context_lines.append("### [2] SEMANTIC SEARCH MATCHES (Based on the text of the question)")
-        
+        # 4. Semantic Search
+        context_lines.append("=== FACT SHEET: RELEVANT PAST STATEMENTS ===")
         semantic_matches = self.semantic_service.search_by_text(query_text=question, top_k=3, session_id=session_id)
-        
         if not semantic_matches:
-            context_lines.append("No semantic matches found for the question.\n")
+            context_lines.append("No relevant past statements found.")
         else:
-            for i, match in enumerate(semantic_matches):
+            for match in semantic_matches:
                 meta = match.get("metadata", {})
-                
-                # Extract Attributes for Semantic Matches
-                speaker_id = meta.get("user_id", "Unknown") 
-                age = meta.get("age", "unknown age")
-                gender = meta.get("gender", "unknown gender")
-                language = meta.get("language", "unknown language")
-                
-                context_lines.append(
-                    f"  Match #{i+1}: Speaker '{speaker_id}' (Semantic Sim: {match['score']:.2f}). "
-                    f"Attributes: {age} {gender} speaking {language}. "
-                    f"They said: \"{match['text']}\""
-                )
-            context_lines.append("")
+                context_lines.append(f"Author: {meta.get('user_id', 'Unknown')} | Statement: \"{match['text']}\"")
+        context_lines.append("")
 
         final_context = "\n".join(context_lines)
 
-        # -----------------------------
-        # 3. Ask Multimodal LLM
-        # -----------------------------
-        prompt = f"""You are an intelligent audio-analysis assistant. 
-                    Listen to the provided audio recordings and analyze the dual-backend retrieval results below.
-                    The retrieval includes both Voice Similarity (identifying the speakers in the audio) and Semantic Similarity (identifying previous discussions matching your question).
+        # 5. Ask LLM
+        prompt = f"""You are a strict data-reporting AI performing Speaker Resolution. 
+                    You must answer the User Question using strictly the FACT SHEET data provided below. 
 
                     {final_context}
+
+                    CRITICAL RULES:
+                    1. If the user asks who is speaking in the files, state the "Identity" for each file. 
+                    2. If multiple files share the same "Unknown_Speaker" identity, explicitly state that those files contain the same person.
+                    3. Do not invent names for Unknown_Speakers.
 
                     ### User Question:
                     {question}
@@ -230,8 +224,16 @@ class SpeakerRAG:
 
         inputs = self._prepare_qwen_audio_inputs(audio_paths, prompt)
         
-        generated_ids = self.llm.generate(**inputs, max_new_tokens=300, temperature=0.3)
+        generated_ids = self.llm.generate(**inputs, max_new_tokens=300, temperature=0.1)
         generated_ids = generated_ids[:, inputs.input_ids.size(1):]
         response = self.processor.batch_decode(generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         
-        return response
+        # 6. CRITICAL: Cleanup the database! Delete all probes from this session.
+        self.audio_service.delete_session(session_id)
+        
+        return response, final_context
+
+    def get_enrolled_users(self) -> dict:
+        """Retrieves all enrolled users from the database."""
+        users = self.audio_service.get_all_enrolled_users()
+        return {"status": "success", "enrolled_users": users}

@@ -35,6 +35,18 @@ def startup_event():
 def health_check():
     return {"status": "Service is running", "models_loaded": rag_system is not None}
 
+@app.get("/rag/enrolled", tags=["RAG"])
+async def get_enrolled():
+    """Returns a list of all enrolled users and their attributes."""
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+    
+    try:
+        result = rag_system.get_enrolled_users()
+        return result
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 @app.delete("/rag/clear", tags=["RAG"])
 async def clear_database():
     """Completely wipes the ChromaDB vector database of all enrolled speakers."""
@@ -114,18 +126,19 @@ async def rag_ask_question(
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_paths = []
-            # Save all probe files preserving original filenames
             for audio in audios:
                 tmp_path = os.path.join(tmpdir, audio.filename)
                 with open(tmp_path, "wb") as f:
                     shutil.copyfileobj(audio.file, f)
                 tmp_paths.append(tmp_path)
 
-            answer = rag_system.query(audio_paths=tmp_paths, question=question)
+            # Unpack both variables here
+            answer, context = rag_system.query(audio_paths=tmp_paths, question=question)
             
             return {
                 "question": question, 
                 "answer": answer,
+                "context": context,  # Pass it back to Gradio!
                 "timestamp": datetime.utcnow().isoformat()
             }
     except Exception as e:
