@@ -136,7 +136,7 @@ class SpeakerRAG:
         return response
 
     def query(self, audio_paths: List[str], question: str) -> str:
-        """Dual Retrieval: Independent Resolution for multiple files with auto-cleanup."""
+        """Dual Retrieval: Independent Resolution for multiple files with Graph-Based Clustering."""
         session_id = f"session_{uuid.uuid4()}"
         
         audio_map = {}
@@ -149,10 +149,12 @@ class SpeakerRAG:
         
         chroma_ids = []
         id_to_path = {}
+        id_to_uid = {}  # Track the internal User IDs
         for uid, results in extraction_results.items():
             for res in results:
                 chroma_ids.append(res["id"])
                 id_to_path[res["id"]] = res["filepath"]
+                id_to_uid[res["id"]] = uid
 
         raw_id_results = self.audio_service.identify_by_id(
             query_ids=chroma_ids, top_k=5, session_id=session_id, probe_only=False
@@ -161,10 +163,59 @@ class SpeakerRAG:
         context_lines = ["=== FACT SHEET: AUDIO FILE RESOLUTION ==="]
         identified_users = set() 
         SIMILARITY_THRESHOLD = 0.65 
+
+        # --- Graph-Based Speaker Clustering (Union-Find) ---
+        parent = {uid: uid for uid in id_to_uid.values()}
+        enroll_links = {} 
         
+        def find(i):
+            if parent.get(i, i) == i:
+                return i
+            parent[i] = find(parent[i])
+            return parent[i]
+            
+        def union(i, j):
+            root_i = find(i)
+            root_j = find(j)
+            if root_i != root_j:
+                # Merge clusters predictably
+                if root_i < root_j:
+                    parent[root_j] = root_i
+                else:
+                    parent[root_i] = root_j
+
+        # Pass 1: Build the clusters
+        for result in raw_id_results:
+            query_id = result["query_id"]
+            my_uid = id_to_uid.get(query_id)
+            if not my_uid: continue
+            
+            matches = result.get("matches", [])
+            valid_matches = [m for m in matches if m.get("score", 0) < 0.99]
+            candidates = [m for m in valid_matches if m.get("score", 0) >= SIMILARITY_THRESHOLD]
+            
+            if candidates:
+                enrolled_candidates = [m for m in candidates if m.get("metadata", {}).get("data_type") == "enroll"]
+                probe_candidates = [m for m in candidates if m.get("metadata", {}).get("data_type") == "probe"]
+                
+                if enrolled_candidates:
+                    # If any file matches an enrolled user, link the entire cluster to that user!
+                    best = sorted(enrolled_candidates, key=lambda x: x.get("score", 0), reverse=True)[0]
+                    enrolled_uid = best.get("metadata", {}).get("user_id")
+                    root = find(my_uid)
+                    enroll_links[root] = enrolled_uid
+                elif probe_candidates:
+                    # If files match each other, merge them into the same cluster
+                    best = sorted(probe_candidates, key=lambda x: x.get("score", 0), reverse=True)[0]
+                    match_uid = best.get("metadata", {}).get("user_id")
+                    if match_uid:
+                        union(my_uid, match_uid)
+
+        # Pass 2: Output the unified Fact Sheet
         for result in raw_id_results:
             query_id = result["query_id"]
             filepath = id_to_path.get(query_id, "")
+            my_uid = id_to_uid.get(query_id)
             
             raw_file_name = os.path.basename(filepath) if filepath else "Unknown File"
             file_name = raw_file_name.split("_", 1)[-1] if "_" in raw_file_name else raw_file_name
@@ -176,49 +227,26 @@ class SpeakerRAG:
 
             context_lines.append(f"--- Audio Track {audio_index} (File: {file_name}) ---")
 
-            matches = result.get("matches", [])
-            
-            # 1. Filter out exact self-matches
-            valid_matches = [m for m in matches if m.get("score", 0) < 0.99]
-            
-            # 2. Apply Threshold
-            candidates = [m for m in valid_matches if m.get("score", 0) >= SIMILARITY_THRESHOLD]
-            
-            best_match = None
-            if candidates:
-                # THE FIX: Separate enrolled users from anonymous probes
-                enrolled_candidates = [m for m in candidates if m.get("metadata", {}).get("data_type") == "enroll"]
-                probe_candidates = [m for m in candidates if m.get("metadata", {}).get("data_type") == "probe"]
-                
-                # Prioritize Enrolled users over Probes!
-                if enrolled_candidates:
-                    enrolled_candidates = sorted(enrolled_candidates, key=lambda x: x.get("score", 0), reverse=True)
-                    best_match = enrolled_candidates[0]
-                elif probe_candidates:
-                    probe_candidates = sorted(probe_candidates, key=lambda x: x.get("score", 0), reverse=True)
-                    best_match = probe_candidates[0]
-            
-            if best_match:
-                meta = best_match.get("metadata", {})
-                data_type = meta.get("data_type")
-                match_uid = meta.get("user_id", "Unknown")
-                
-                if data_type == "enroll":
-                    identity = match_uid
-                else:
-                    # Successfully grouped with an unknown probe (Diarization)
-                    identity = f"Unknown_Speaker_{str(match_uid)[:8]}"
-                    
-                identified_users.add(match_uid)
-                age = meta.get("age", "Unknown")
-                gender = meta.get("gender", "Unknown")
-                language = meta.get("language", "Unknown")
+            # Resolve the final Identity using the cluster root
+            root = find(my_uid)
+            if root in enroll_links:
+                identity = enroll_links[root]
             else:
-                identity = "UNIDENTIFIED SPEAKER"
-                age = "Unknown"
-                gender = "Unknown"
-                language = "Unknown"
+                identity = f"Unknown_Speaker_{str(root)[:8]}"
                 
+            identified_users.add(identity)
+
+            # Pull Age/Gender natively from this specific audio file's extraction
+            attributes = {}
+            for res in extraction_results.get(my_uid, []):
+                if res["id"] == query_id:
+                    attributes = res.get("attributes", {})
+                    break
+
+            age = attributes.get("age", "Unknown")
+            gender = attributes.get("gender", "Unknown")
+            language = attributes.get("language", "Unknown")
+            
             context_lines.append(f"Identity: {identity}")
             context_lines.append(f"Age Bracket: {age}")
             context_lines.append(f"Gender: {gender}")
@@ -226,6 +254,7 @@ class SpeakerRAG:
         
         context_lines.append("")
 
+        # 4. Semantic Search (Filtered by Identity)
         context_lines.append("=== FACT SHEET: RELEVANT PAST STATEMENTS ===")
         
         semantic_matches = self.semantic_service.search_by_text(
@@ -245,21 +274,22 @@ class SpeakerRAG:
 
         final_context = "\n".join(context_lines)
 
+        # 5. Ask LLM
         prompt = f"""You are a strict data-reporting AI performing Speaker Resolution. 
-                You are receiving {len(audio_paths)} distinct audio tracks.
-                You must answer the User Question using strictly the FACT SHEET data provided below. 
+                    You are receiving {len(audio_paths)} distinct audio tracks.
+                    You must answer the User Question using strictly the FACT SHEET data provided below. 
 
-                {final_context}
+                    {final_context}
 
-                CRITICAL RULES:
-                1. Map your audio inputs directly to the "Audio Track" numbers in the FACT SHEET.
-                2. If the user asks who is speaking, list the Identity for EVERY Audio Track individually. 
-                3. If multiple tracks share the same identity, explicitly state that those tracks contain the same person.
+                    CRITICAL RULES:
+                    1. Map your audio inputs directly to the "Audio Track" numbers in the FACT SHEET.
+                    2. If the user asks who is speaking, list the Identity for EVERY Audio Track individually. 
+                    3. If multiple tracks share the exact same identity, explicitly state that those tracks contain the same person.
 
-                ### User Question:
-                {question}
+                    ### User Question:
+                    {question}
 
-                ### Answer:"""
+                    ### Answer:"""
 
         inputs = self._prepare_qwen_audio_inputs(audio_paths, prompt)
         
