@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 venv/
 enrolled_data/
+exported_images/
 enrollment_data/
 speaker_rag/embedding_model/*.nemo
 speaker_rag/age_model/

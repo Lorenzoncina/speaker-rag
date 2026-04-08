@@ -1,31 +1,42 @@
-# Use the official PyTorch image with CUDA 13 support
+# Use the official PyTorch image with CUDA support
 FROM pytorch/pytorch:2.9.0-cuda13.0-cudnn9-devel
 
 # Working directory
 WORKDIR /app
 
+# Set Hugging Face cache directory so model downloads are stored predictably
+ENV HF_HOME=/app/models_cache
+
 # 1. Install System Dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
-    libsndfile1 && \
+    libsndfile1 \
+    git && \
     rm -rf /var/lib/apt/lists/*
 
-# 2. Install Application Requirements
+# 2. Install Application Requirements & Re-align Torchvision
 COPY requirements-cuda13.txt /app/
-RUN pip install --no-cache-dir -r requirements-cuda13.txt
+# We add the extra-index-url so pip grabs CUDA-compatible wheels instead of PyPI CPU defaults,
+# and we force a reinstall of torchvision just in case a requirement overwrote it.
+RUN pip install --no-cache-dir -r requirements-cuda13.txt --extra-index-url https://download.pytorch.org/whl/cu130 && \
+    pip install --no-cache-dir --upgrade torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu130
 
 # 3. Copy Application Code & Modules
-COPY download_models.py /app/
-COPY age_model/age_probe.pt /app/age_model/
+COPY speaker_rag/age_model/ /app/age_model/
 COPY speaker_rag/ /app/speaker_rag/
 COPY api/ /app/api/
+COPY download_models.py /app/
 COPY gunicorn_conf.py /app/
 
 # 4. Pre-Download Models into the Image
 RUN python download_models.py
 
-# Expose port
-EXPOSE 8006
+# 5. Database Persistence (CRITICAL)
+RUN mkdir -p /app/enrolled_data/chroma
+VOLUME ["/app/enrolled_data"]
 
-# Start Server (Notice the update from "endpoints:app" to "api.endpoints:app")
+# Expose port
+EXPOSE 8007
+
+# Start Server
 CMD ["gunicorn", "--config", "gunicorn_conf.py", "api.endpoints:app"]

@@ -3,6 +3,7 @@ import torch
 from nemo.collections.asr.models import EncDecSpeakerLabelModel
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 from transformers import Wav2Vec2ForSequenceClassification, Wav2Vec2FeatureExtractor
+from sentence_transformers import SentenceTransformer
 from .identification_service import AgeProbe
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -16,7 +17,8 @@ def load_audio_models(
     gender_dir=os.path.join(CURRENT_DIR, "gender_model"),
     gender_name="prithivMLmods/Common-Voice-Gender-Detection",
     age_dir=os.path.join(CURRENT_DIR, "age_model"),
-    age_name="age_probe.pt"
+    age_name="age_probe.pt",
+    semantic_name="all-MiniLM-L6-v2" # NEW: Fast semantic model
 ):
     """Loads and returns all audio processing models."""
     print(f"Loading audio models on device: {device}...")
@@ -56,6 +58,10 @@ def load_audio_models(
     except Exception as e:
         print(f"Failed to load Age model: {e}")
         age_model = None
+        
+    # 5. Semantic Text Model (NEW)
+    print("Loading Semantic Text Model...")
+    semantic_model = SentenceTransformer(semantic_name, device=device)
 
     return {
         "embedding_model": titanet_model,
@@ -63,5 +69,6 @@ def load_audio_models(
         "language_model": whisper_model,
         "gender_processor": gender_processor,
         "gender_model": gender_model,
-        "age_model": age_model
+        "age_model": age_model,
+        "semantic_model": semantic_model
     }

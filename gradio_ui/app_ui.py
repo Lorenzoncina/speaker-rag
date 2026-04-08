@@ -3,8 +3,9 @@ import gradio as gr
 import requests
 
 # --- Configuration ---
-# Point this to where your endpoints.py FastAPI server is running
-FASTAPI_URL = "http://0.0.0.0:8007"
+#FASTAPI_URL = "http://0.0.0.0:8006" 
+FASTAPI_URL = "http://127.0.0.1:8006" #fbk server (requires SSH Port Forwarding )
+
 
 # ==========================================
 # Tab 1: Direct LLM Functions (No RAG)

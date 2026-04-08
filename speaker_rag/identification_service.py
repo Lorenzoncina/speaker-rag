@@ -107,7 +107,7 @@ class _Identification_Service:
     
     def extract_audio_attributes(self, audio_path: str) -> Dict[str, Any]:
         """
-        Extracts language from an audio file using Whisper.
+        Extracts language and transcription from an audio file using Whisper.
         Age extimation with a custom trained classifier and Gender classification with a Wav2vec finetuned model (from HF)
         """
         try:
@@ -117,10 +117,12 @@ class _Identification_Service:
             return {
                 "gender": "error", "gender_confidence": 0.0,
                 "language": "error", "language_confidence": 0.0,
-                "age": "error", "age_confidence": 0.0
+                "age": "error", "age_confidence": 0.0,
+                "transcription": "" # NEW
             }
 
-        # --- 1. Whisper-based Features (Age & Language) ---
+        # --- 1. Whisper-based Features (Age, Language, Transcription) ---
+        transcription = ""
         try:
             inputs = self._language_processor(waveform, sampling_rate=16000, return_tensors="pt")
             input_features = inputs.input_features.to(self._device)
@@ -130,12 +132,10 @@ class _Identification_Service:
                 try:
                     with torch.no_grad():
                         encoder_outputs = self._language_model.get_encoder()(input_features)
-                        hidden_states = encoder_outputs.last_hidden_state # (1, T, 384)
-                        
+                        hidden_states = encoder_outputs.last_hidden_state
                         age_logits = self._age_model(hidden_states)
                         age_probs = torch.nn.functional.softmax(age_logits, dim=-1)
                         age_idx = torch.argmax(age_probs, dim=-1).item()
-                        
                         age_label = self._age_bins[age_idx]
                         age_confidence = round(age_probs[0, age_idx].item(), 3)
                 except Exception as age_e:
@@ -157,15 +157,20 @@ class _Identification_Service:
                         output_scores=True,
                         return_dict_in_generate=True
                     )
-
                     language_token_id = outputs.sequences[0][-1].item() 
                     language = self._language_processor.decode(language_token_id).strip('<|>')
-                    
-                    logits = outputs.scores[0]
-                    probs = torch.nn.functional.softmax(logits, dim=-1)
+                    probs = torch.nn.functional.softmax(outputs.scores[0], dim=-1)
                     language_confidence = round(probs[0, language_token_id].item(), 3)
             except Exception as lang_e:
                 print(f"Language generation failed for {audio_path}: {lang_e}")
+                
+            # --- 1c. Full Transcription  ---
+            try:
+                with torch.no_grad():
+                    trans_ids = self._language_model.generate(input_features, max_new_tokens=256)
+                    transcription = self._language_processor.batch_decode(trans_ids, skip_special_tokens=True)[0].strip()
+            except Exception as trans_e:
+                print(f"Transcription failed for {audio_path}: {trans_e}")
 
         except Exception as whisper_e:
             print(f"Whisper processing block failed for {audio_path}: {whisper_e}")
@@ -173,19 +178,14 @@ class _Identification_Service:
         # --- 2. Gender Classification with Wav2Vec2 ---
         try:
             gender_inputs = self._gender_processor(
-                waveform,
-                sampling_rate=16000,
-                return_tensors="pt",
-                padding=True
+                waveform, sampling_rate=16000, return_tensors="pt", padding=True
             )
             input_values = gender_inputs.input_values.to(self._device)
 
             with torch.no_grad():
                 gender_outputs = self._gender_model(input_values)
-                gender_logits = gender_outputs.logits
-                gender_probs = torch.nn.functional.softmax(gender_logits, dim=1).squeeze().tolist()
+                gender_probs = torch.nn.functional.softmax(gender_outputs.logits, dim=1).squeeze().tolist()
             
-            # Map index to label (0: female, 1: male) and extract highest confidence
             if gender_probs[0] > gender_probs[1]:
                 gender = "female"
                 gender_confidence = round(gender_probs[0], 3)
@@ -204,7 +204,8 @@ class _Identification_Service:
             "language": language,
             "language_confidence": language_confidence,
             "age": age_label,        
-            "age_confidence": age_confidence        
+            "age_confidence": age_confidence,
+            "transcription": transcription 
         }
 
 
