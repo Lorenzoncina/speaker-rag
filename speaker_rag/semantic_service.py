@@ -51,7 +51,7 @@ class _Semantic_Service:
         except Exception as e:
             print(f"Failed to index transcriptions into Semantic DB: {e}")
 
-    def search_by_text(self, query_text: str, top_k: int = 3, session_id: str = None, target_user_ids: List[str] = None) -> List[Dict[str, Any]]:
+    def search_by_text(self, query_text: str, top_k: int = 5, session_id: str = None, target_user_ids: List[str] = None) -> List[Dict[str, Any]]:
         """Searches the semantic database, optionally filtering by specific user IDs."""
         try:
             query_embedding = self._model.encode([query_text]).tolist()

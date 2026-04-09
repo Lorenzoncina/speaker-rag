@@ -259,7 +259,7 @@ class SpeakerRAG:
         
         semantic_matches = self.semantic_service.search_by_text(
             query_text=question, 
-            top_k=3, 
+            top_k=5, 
             session_id=session_id,
             target_user_ids=list(identified_users) if identified_users else None 
         )
@@ -275,21 +275,23 @@ class SpeakerRAG:
         final_context = "\n".join(context_lines)
 
         # 5. Ask LLM
+        # 5. Ask LLM
         prompt = f"""You are a strict data-reporting AI performing Speaker Resolution. 
-                    You are receiving {len(audio_paths)} distinct audio tracks.
-                    You must answer the User Question using strictly the FACT SHEET data provided below. 
+                You are receiving {len(audio_paths)} distinct audio tracks.
+                You must answer the User Question using strictly the FACT SHEET data provided below. 
 
-                    {final_context}
+                {final_context}
 
-                    CRITICAL RULES:
-                    1. Map your audio inputs directly to the "Audio Track" numbers in the FACT SHEET.
-                    2. If the user asks who is speaking, list the Identity for EVERY Audio Track individually. 
-                    3. If multiple tracks share the exact same identity, explicitly state that those tracks contain the same person.
+                CRITICAL RULES:
+                1. Map your audio inputs directly to the "Audio Track" numbers in the FACT SHEET.
+                2. The "Identity" field is the ABSOLUTE GROUND TRUTH. If the "Identity" string is exactly the same across multiple tracks, it is GUARANTEED to be the exact same person. 
+                3. You must ignore discrepancies in "Age Bracket" or "Gender" if the "Identity" field matches. Do not invent multiple people if the Identity is the same.
+                4. If the user asks who is speaking, list the Identity for EVERY Audio Track individually, and explicitly state if tracks share the same identity.
 
-                    ### User Question:
-                    {question}
+                ### User Question:
+                {question}
 
-                    ### Answer:"""
+                ### Answer:"""
 
         inputs = self._prepare_qwen_audio_inputs(audio_paths, prompt)
         
