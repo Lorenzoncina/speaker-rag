@@ -246,11 +246,13 @@ class SpeakerRAG:
             age = attributes.get("age", "Unknown")
             gender = attributes.get("gender", "Unknown")
             language = attributes.get("language", "Unknown")
+            emotion = attributes.get("emotion", "Unknown")
             
             context_lines.append(f"Identity: {identity}")
             context_lines.append(f"Age Bracket: {age}")
             context_lines.append(f"Gender: {gender}")
             context_lines.append(f"Language: {language}")
+            context_lines.append(f"Current Emotion: {emotion}")
         
         context_lines.append("")
 
@@ -269,29 +271,29 @@ class SpeakerRAG:
         else:
             for match in semantic_matches:
                 meta = match.get("metadata", {})
-                context_lines.append(f"Author: {meta.get('user_id', 'Unknown')} | Statement: \"{match['text']}\"")
+                emo = meta.get("emotion", "Unknown")
+                context_lines.append(f"Author: {meta.get('user_id', 'Unknown')} | Emotion: {emo} | Statement: \"{match['text']}\"")
         context_lines.append("")
 
         final_context = "\n".join(context_lines)
 
         # 5. Ask LLM
-        # 5. Ask LLM
-        prompt = f"""You are a strict data-reporting AI performing Speaker Resolution. 
-                You are receiving {len(audio_paths)} distinct audio tracks.
-                You must answer the User Question using strictly the FACT SHEET data provided below. 
+        prompt = f"""You are a strict data-reporting AI performing Speaker Resolution and Sentiment Analysis. 
+            You are receiving {len(audio_paths)} distinct audio tracks.
+            You must answer the User Question using strictly the FACT SHEET data provided below. 
 
-                {final_context}
+            {final_context}
 
-                CRITICAL RULES:
-                1. Map your audio inputs directly to the "Audio Track" numbers in the FACT SHEET.
-                2. The "Identity" field is the ABSOLUTE GROUND TRUTH. If the "Identity" string is exactly the same across multiple tracks, it is GUARANTEED to be the exact same person. 
-                3. You must ignore discrepancies in "Age Bracket" or "Gender" if the "Identity" field matches. Do not invent multiple people if the Identity is the same.
-                4. If the user asks who is speaking, list the Identity for EVERY Audio Track individually, and explicitly state if tracks share the same identity.
+            CRITICAL RULES:
+            1. Map your audio inputs directly to the "Audio Track" numbers in the FACT SHEET.
+            2. The "Identity" field is the ABSOLUTE GROUND TRUTH. If the "Identity" string is exactly the same across multiple tracks, it is GUARANTEED to be the exact same person. 
+            3. You must ignore discrepancies in "Age Bracket" or "Gender" if the "Identity" field matches. 
+            4. Use the "Emotion" tags attached to the Current Tracks and Past Statements to explain HOW the speaker was feeling or WHY they might have said something. 
 
-                ### User Question:
-                {question}
+            ### User Question:
+            {question}
 
-                ### Answer:"""
+            ### Answer:"""
 
         inputs = self._prepare_qwen_audio_inputs(audio_paths, prompt)
         

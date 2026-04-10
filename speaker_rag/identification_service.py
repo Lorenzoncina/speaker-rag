@@ -65,6 +65,8 @@ class _Identification_Service:
     _age_model = None
     _age_bins = ["0-19", "20-39", "40-59", "60+"]
     _gender_processor = None
+    _emotion_model = None     
+    _emotion_processor = None 
     _device = None
 
     # ChromaDB client and collection
@@ -175,7 +177,7 @@ class _Identification_Service:
         except Exception as whisper_e:
             print(f"Whisper processing block failed for {audio_path}: {whisper_e}")
 
-        # --- 2. Gender Classification with Wav2Vec2 ---
+         # --- 2. Gender Classification with Wav2Vec2 ---
         try:
             gender_inputs = self._gender_processor(
                 waveform, sampling_rate=16000, return_tensors="pt", padding=True
@@ -198,6 +200,26 @@ class _Identification_Service:
             gender = "error"
             gender_confidence = 0.0
 
+        # --- 3. Emotion Classification ---
+        try:
+            if self._emotion_model is not None and self._emotion_processor is not None:
+                emo_inputs = self._emotion_processor(
+                    waveform, sampling_rate=16000, return_tensors="pt", padding=True
+                )
+                emo_input_values = emo_inputs.input_values.to(self._device)
+                
+                with torch.no_grad():
+                    emo_outputs = self._emotion_model(emo_input_values)
+                    emo_logits = emo_outputs.logits
+                    emo_idx = torch.argmax(emo_logits, dim=-1).item()
+                    emotion = self._emotion_model.config.id2label[emo_idx]
+            else:
+                emotion = "Unknown"
+        except Exception as e:
+            print(f"Emotion classification failed for {audio_path}: {e}")
+            emotion = "error"
+
+
         return {
             "gender": gender,      
             "gender_confidence": gender_confidence,     
@@ -205,7 +227,8 @@ class _Identification_Service:
             "language_confidence": language_confidence,
             "age": age_label,        
             "age_confidence": age_confidence,
-            "transcription": transcription 
+            "transcription": transcription,
+            "emotion": emotion
         }
 
 
@@ -406,7 +429,7 @@ class _Identification_Service:
 
 
 
-def Identification_Service(embedding_model, language_processor, language_model, gender_processor, gender_model, age_model, device, chroma_client, collection_name):
+def Identification_Service(embedding_model, language_processor, language_model, gender_processor, gender_model, age_model, emotion_processor, emotion_model, device, chroma_client, collection_name):
     """
     Factory method for the singleton service.
     Accepts pre-loaded AI models and clients.
@@ -422,6 +445,8 @@ def Identification_Service(embedding_model, language_processor, language_model, 
         _Identification_Service._gender_processor = gender_processor
         _Identification_Service._age_model = age_model
         _Identification_Service._gender_model = gender_model
+        _Identification_Service._emotion_processor = emotion_processor
+        _Identification_Service._emotion_model = emotion_model
         
         # 2. Connect to ChromaDB
         _Identification_Service._chroma_client = PersistentClient(path=chroma_client)

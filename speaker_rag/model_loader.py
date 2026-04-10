@@ -3,6 +3,7 @@ import torch
 from nemo.collections.asr.models import EncDecSpeakerLabelModel
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 from transformers import Wav2Vec2ForSequenceClassification, Wav2Vec2FeatureExtractor
+from transformers import AutoFeatureExtractor, AutoModelForAudioClassification 
 from sentence_transformers import SentenceTransformer
 from .identification_service import AgeProbe
 
@@ -18,7 +19,9 @@ def load_audio_models(
     gender_name="prithivMLmods/Common-Voice-Gender-Detection",
     age_dir=os.path.join(CURRENT_DIR, "age_model"),
     age_name="age_probe.pt",
-    semantic_name="all-MiniLM-L6-v2" # NEW: Fast semantic model
+    semantic_name="all-MiniLM-L6-v2", 
+    emotion_dir=os.path.join(CURRENT_DIR, "emotion_model"), # NEW
+    emotion_name="ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition" # NEW
 ):
     """Loads and returns all audio processing models."""
     print(f"Loading audio models on device: {device}...")
@@ -59,9 +62,24 @@ def load_audio_models(
         print(f"Failed to load Age model: {e}")
         age_model = None
         
-    # 5. Semantic Text Model (NEW)
+    # 5. Semantic Text Model
     print("Loading Semantic Text Model...")
     semantic_model = SentenceTransformer(semantic_name, device=device)
+
+    # 6. Emotion Model 
+    print("Loading Emotion Model...")
+    try:
+        # Explicitly check if the local folder exists to prevent HF Validation crashes
+        if os.path.exists(emotion_dir):
+            emotion_processor = AutoFeatureExtractor.from_pretrained(emotion_dir)
+            emotion_model = AutoModelForAudioClassification.from_pretrained(emotion_dir).to(device)
+        else:
+            raise FileNotFoundError("Local emotion directory not found. Falling back to Hub.")
+    except Exception as e:
+        print(f"Downloading Emotion Model from Hub: {emotion_name}")
+        emotion_processor = AutoFeatureExtractor.from_pretrained(emotion_name)
+        emotion_model = AutoModelForAudioClassification.from_pretrained(emotion_name).to(device)
+    emotion_model.eval()
 
     return {
         "embedding_model": titanet_model,
@@ -70,5 +88,7 @@ def load_audio_models(
         "gender_processor": gender_processor,
         "gender_model": gender_model,
         "age_model": age_model,
-        "semantic_model": semantic_model
+        "semantic_model": semantic_model,
+        "emotion_processor": emotion_processor, 
+        "emotion_model": emotion_model
     }
