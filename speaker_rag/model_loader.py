@@ -6,6 +6,7 @@ from transformers import Wav2Vec2ForSequenceClassification, Wav2Vec2FeatureExtra
 from transformers import AutoFeatureExtractor, AutoModelForAudioClassification 
 from sentence_transformers import SentenceTransformer
 from .identification_service import AgeProbe
+from transformers import pipeline
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -81,6 +82,10 @@ def load_audio_models(
         emotion_model = AutoModelForAudioClassification.from_pretrained(emotion_name).to(device)
     emotion_model.eval()
 
+    # 7. Semantic Text Emotion Model (NEW)
+    print("Loading Semantic Text Emotion Model...")
+    text_emotion_pipeline = pipeline("text-classification", model="SamLowe/roberta-base-go_emotions", top_k=1, device=0 if device=="cuda" else -1)
+
     return {
         "embedding_model": titanet_model,
         "language_processor": whisper_processor,
@@ -90,5 +95,6 @@ def load_audio_models(
         "age_model": age_model,
         "semantic_model": semantic_model,
         "emotion_processor": emotion_processor, 
-        "emotion_model": emotion_model
+        "emotion_model": emotion_model,
+        "text_emotion_pipeline": text_emotion_pipeline
     }

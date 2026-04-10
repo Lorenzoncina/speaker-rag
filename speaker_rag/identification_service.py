@@ -65,8 +65,11 @@ class _Identification_Service:
     _age_model = None
     _age_bins = ["0-19", "20-39", "40-59", "60+"]
     _gender_processor = None
+    
     _emotion_model = None     
     _emotion_processor = None 
+    _text_emotion_pipeline = None
+    
     _device = None
 
     # ChromaDB client and collection
@@ -120,7 +123,9 @@ class _Identification_Service:
                 "gender": "error", "gender_confidence": 0.0,
                 "language": "error", "language_confidence": 0.0,
                 "age": "error", "age_confidence": 0.0,
-                "transcription": "" # NEW
+                "transcription": "",
+                "acoustic_emotion": "error",
+                "text_emotion": "error"
             }
 
         # --- 1. Whisper-based Features (Age, Language, Transcription) ---
@@ -142,8 +147,11 @@ class _Identification_Service:
                         age_confidence = round(age_probs[0, age_idx].item(), 3)
                 except Exception as age_e:
                     print(f"Age estimation inference failed for {audio_path}: {age_e}")
+                    age_label = "error"
+                    age_confidence = 0.0
             else:
-                print(f"Age model is not initialized. Skipping age estimation for {audio_path}.")
+                age_label = "Unknown"
+                age_confidence = 0.0
 
             # --- 1b. Language Identification ---
             try:
@@ -165,6 +173,8 @@ class _Identification_Service:
                     language_confidence = round(probs[0, language_token_id].item(), 3)
             except Exception as lang_e:
                 print(f"Language generation failed for {audio_path}: {lang_e}")
+                language = "error"
+                language_confidence = 0.0
                 
             # --- 1c. Full Transcription  ---
             try:
@@ -176,8 +186,12 @@ class _Identification_Service:
 
         except Exception as whisper_e:
             print(f"Whisper processing block failed for {audio_path}: {whisper_e}")
+            age_label = "error"
+            age_confidence = 0.0
+            language = "error"
+            language_confidence = 0.0
 
-         # --- 2. Gender Classification with Wav2Vec2 ---
+        # --- 2. Gender Classification with Wav2Vec2 ---
         try:
             gender_inputs = self._gender_processor(
                 waveform, sampling_rate=16000, return_tensors="pt", padding=True
@@ -200,7 +214,7 @@ class _Identification_Service:
             gender = "error"
             gender_confidence = 0.0
 
-        # --- 3. Emotion Classification ---
+        # --- 3. Acoustic Emotion Classification ---
         try:
             if self._emotion_model is not None and self._emotion_processor is not None:
                 emo_inputs = self._emotion_processor(
@@ -212,13 +226,24 @@ class _Identification_Service:
                     emo_outputs = self._emotion_model(emo_input_values)
                     emo_logits = emo_outputs.logits
                     emo_idx = torch.argmax(emo_logits, dim=-1).item()
-                    emotion = self._emotion_model.config.id2label[emo_idx]
+                    # CRITICAL FIX: Save directly to acoustic_emotion
+                    acoustic_emotion = self._emotion_model.config.id2label[emo_idx]
             else:
-                emotion = "Unknown"
+                acoustic_emotion = "Unknown"
         except Exception as e:
-            print(f"Emotion classification failed for {audio_path}: {e}")
-            emotion = "error"
+            print(f"Acoustic Emotion classification failed for {audio_path}: {e}")
+            acoustic_emotion = "error"
 
+        # --- 4. Semantic Text Emotion Classification ---
+        text_emotion = "Unknown"
+        try:
+            # We only run this if Whisper successfully found words!
+            if transcription and self._text_emotion_pipeline is not None:
+                results = self._text_emotion_pipeline(transcription)
+                # CRITICAL FIX: Safely parse the output regardless of list nesting
+                text_emotion = results[0]['label'] if isinstance(results[0], dict) else results[0][0]['label']
+        except Exception as e:
+            print(f"Text Emotion classification failed for {audio_path}: {e}")
 
         return {
             "gender": gender,      
@@ -228,7 +253,8 @@ class _Identification_Service:
             "age": age_label,        
             "age_confidence": age_confidence,
             "transcription": transcription,
-            "emotion": emotion
+            "acoustic_emotion": acoustic_emotion, 
+            "text_emotion": text_emotion          
         }
 
 
@@ -429,7 +455,7 @@ class _Identification_Service:
 
 
 
-def Identification_Service(embedding_model, language_processor, language_model, gender_processor, gender_model, age_model, emotion_processor, emotion_model, device, chroma_client, collection_name):
+def Identification_Service(embedding_model, language_processor, language_model, gender_processor, gender_model, age_model, emotion_processor, emotion_model, text_emotion_pipeline, device, chroma_client, collection_name):
     """
     Factory method for the singleton service.
     Accepts pre-loaded AI models and clients.
@@ -445,8 +471,11 @@ def Identification_Service(embedding_model, language_processor, language_model, 
         _Identification_Service._gender_processor = gender_processor
         _Identification_Service._age_model = age_model
         _Identification_Service._gender_model = gender_model
+        
+        # ---> Emotion models correctly mapped here
         _Identification_Service._emotion_processor = emotion_processor
         _Identification_Service._emotion_model = emotion_model
+        _Identification_Service._text_emotion_pipeline = text_emotion_pipeline 
         
         # 2. Connect to ChromaDB
         _Identification_Service._chroma_client = PersistentClient(path=chroma_client)

@@ -246,13 +246,19 @@ class SpeakerRAG:
             age = attributes.get("age", "Unknown")
             gender = attributes.get("gender", "Unknown")
             language = attributes.get("language", "Unknown")
-            emotion = attributes.get("emotion", "Unknown")
-            
+            acoustic_emotion = attributes.get("acoustic_emotion", "Unknown")
+            text_emotion = attributes.get("text_emotion", "Unknown")
+            transcription = attributes.get("transcription", "No transcription available.")
+
+            context_lines.append(f"Speaker Profile:")
             context_lines.append(f"Identity: {identity}")
             context_lines.append(f"Age Bracket: {age}")
             context_lines.append(f"Gender: {gender}")
             context_lines.append(f"Language: {language}")
-            context_lines.append(f"Current Emotion: {emotion}")
+            context_lines.append(f"Current Utterance Analysis:")
+            context_lines.append(f"  - Vocal Tone: {acoustic_emotion}")
+            context_lines.append(f"  - Semantic Tone: {text_emotion}")
+            context_lines.append(f"  - Transcription: \"{transcription}\"")
         
         context_lines.append("")
 
@@ -271,8 +277,9 @@ class SpeakerRAG:
         else:
             for match in semantic_matches:
                 meta = match.get("metadata", {})
-                emo = meta.get("emotion", "Unknown")
-                context_lines.append(f"Author: {meta.get('user_id', 'Unknown')} | Emotion: {emo} | Statement: \"{match['text']}\"")
+                ac_emo = meta.get("acoustic_emotion", "Unknown")
+                txt_emo = meta.get("text_emotion", "Unknown")
+                context_lines.append(f"Author: {meta.get('user_id', 'Unknown')} | Vocal Tone: {ac_emo} | Semantic Tone: {txt_emo} | Statement: \"{match['text']}\"")
         context_lines.append("")
 
         final_context = "\n".join(context_lines)
