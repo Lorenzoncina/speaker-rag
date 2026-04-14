@@ -329,6 +329,8 @@ class SpeakerRAG:
         final_context = "\n".join(context_lines)
 
         # 5. Ask LLM
+        # 5. Ask LLM
+        # 5. Ask LLM
         prompt = f"""You are a strict data-reporting AI performing Speaker Resolution and Sentiment Analysis. 
             You are receiving {len(audio_paths)} distinct audio tracks.
             You must answer the User Question using strictly the FACT SHEET data provided below. 
@@ -337,9 +339,14 @@ class SpeakerRAG:
 
             CRITICAL RULES:
             1. Map your audio inputs directly to the "Audio Track" numbers in the FACT SHEET.
-            2. The "Identity" field is the ABSOLUTE GROUND TRUTH. If the "Identity" string is exactly the same across multiple tracks, it is GUARANTEED to be the exact same person. 
-            3. You must ignore discrepancies in "Age Bracket" or "Gender" if the "Identity" field matches. 
-            4. Use the "Emotion" tags attached to the Current Tracks and Past Statements to explain HOW the speaker was feeling or WHY they might have said something. 
+            2. The "Identity" field is the ABSOLUTE GROUND TRUTH for determining who is speaking. 
+            3. SAME SPEAKER: If the "Identity" strings are identical, it is GUARANTEED to be the exact same person. You must explicitly disregard differing Age or Gender predictions.
+            4. DIFFERENT SPEAKERS: If the "Identity" strings are different, they are GUARANTEED to be different people.
+            5. Emotion: Use the "Emotion" tags attached to explain HOW the speaker was feeling.
+
+            MANDATORY REASONING FORMAT:
+            If the user asks if the speakers are the same, you MUST start your response by explicitly stating the Identity of each track. 
+            Example: "Track 1 identity is [X] and Track 2 identity is [Y]. Therefore, they are [the same / different]." 
 
             ### User Question:
             {question}
