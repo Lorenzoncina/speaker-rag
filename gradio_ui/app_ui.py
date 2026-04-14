@@ -121,6 +121,21 @@ def clear_rag():
     except Exception as e:
         return f"An error occurred: {str(e)}"
 
+def ingest_meld_ui():
+    """Triggers the backend backdoor to ingest the MELD dataset."""
+    try:
+        # Note: We use GET here because that's how we defined it in endpoints.py
+        response = requests.get(f"{FASTAPI_URL}/admin/ingest_meld")
+        if response.status_code == 200:
+            res_json = response.json()
+            return f"MELD Ingestion Complete!\nProcessed: {res_json.get('enrolled_count', 0)} files."
+        else:
+            return f"Error {response.status_code}:\n{response.text}"
+    except requests.exceptions.ConnectionError:
+        return f"Connection Error: Is the FastAPI backend running on {FASTAPI_URL}?"
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
+
 # ==========================================
 # Gradio UI Layout
 # ==========================================
@@ -169,6 +184,7 @@ with gr.Blocks(title="Speaker Identification & Resolution Demo", theme=gr.themes
                             enroll_btn = gr.Button("Enroll to RAG")
                             list_btn = gr.Button("Show Enrolled Users", variant="secondary")
                             clear_btn = gr.Button("Clear Entire Database", variant="stop")
+                            meld_btn = gr.Button(" Ingest MELD (Admin)", variant="primary")
                     
                     with gr.Column():
                         enroll_output = gr.Textbox(label="Enrollment / Database Status", lines=10)
@@ -176,6 +192,7 @@ with gr.Blocks(title="Speaker Identification & Resolution Demo", theme=gr.themes
                 enroll_btn.click(fn=enroll_rag, inputs=[enroll_audio, enroll_ids], outputs=enroll_output)
                 list_btn.click(fn=list_enrolled_users, inputs=[], outputs=enroll_output)
                 clear_btn.click(fn=clear_rag, inputs=[], outputs=enroll_output)
+                meld_btn.click(fn=ingest_meld_ui, inputs=[], outputs=enroll_output)
                 
             with gr.Accordion("🔍 Step 2: Query / Probe Audio", open=True):
                 gr.Markdown("Upload unknown probe files to identify them against the enrolled database and ask the multimodal LLM questions about the results.")

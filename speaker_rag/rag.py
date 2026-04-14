@@ -162,7 +162,7 @@ class SpeakerRAG:
 
         context_lines = ["=== FACT SHEET: AUDIO FILE RESOLUTION ==="]
         identified_users = set() 
-        SIMILARITY_THRESHOLD = 0.65 
+        SIMILARITY_THRESHOLD = 0.50
 
         # --- Graph-Based Speaker Clustering (Union-Find) ---
         parent = {uid: uid for uid in id_to_uid.values()}
@@ -275,11 +275,55 @@ class SpeakerRAG:
         if not semantic_matches:
             context_lines.append("No relevant past statements found for the identified speaker(s).")
         else:
+            # Keep track of dialogue IDs we've already printed so we don't duplicate 
+            # if two semantic matches happen to come from the exact same conversation!
+            printed_dialogues = set()
+
             for match in semantic_matches:
                 meta = match.get("metadata", {})
-                ac_emo = meta.get("acoustic_emotion", "Unknown")
-                txt_emo = meta.get("text_emotion", "Unknown")
-                context_lines.append(f"Author: {meta.get('user_id', 'Unknown')} | Vocal Tone: {ac_emo} | Semantic Tone: {txt_emo} | Statement: \"{match['text']}\"")
+                dialogue_id = meta.get("dialogue_id")
+                
+                # --- SCENARIO A: This match belongs to a MELD conversation ---
+                if dialogue_id and dialogue_id not in printed_dialogues:
+                    printed_dialogues.add(dialogue_id)
+                    
+                    try:
+                        # 1. Fetch ALL utterances from this specific conversation
+                        dialogue_records = self.semantic_service._collection.get(
+                            where={"dialogue_id": dialogue_id},
+                            include=["metadatas", "documents"]
+                        )
+                        
+                        # 2. Extract and format them
+                        turns = []
+                        for doc, d_meta in zip(dialogue_records["documents"], dialogue_records["metadatas"]):
+                            turns.append({
+                                "u_id": int(d_meta.get("utterance_id", 0)),
+                                "speaker": d_meta.get("user_id", "Unknown").capitalize(),
+                                "text": doc,
+                                "ac_emo": d_meta.get("acoustic_emotion", "Unknown"),
+                                "txt_emo": d_meta.get("text_emotion", "Unknown")
+                            })
+                            
+                        # Sort chronologically by the utterance turn
+                        turns = sorted(turns, key=lambda x: x["u_id"])
+                        
+                        # 3. Print the reconstructed conversation block
+                        context_lines.append(f"\n--- Reconstructed Conversation (Dialogue ID: {dialogue_id}) ---")
+                        for turn in turns:
+                            # Add an arrow (►) to highlight the exact quote that triggered the semantic match!
+                            prefix = "►" if turn["text"] == match.get("text", "") else " "
+                            context_lines.append(f"{prefix} {turn['speaker']} (Vocal: {turn['ac_emo']} | Semantic: {turn['txt_emo']}): \"{turn['text']}\"")
+                            
+                    except Exception as e:
+                        print(f"Failed to reconstruct dialogue {dialogue_id}: {e}")
+                        
+                # --- SCENARIO B: Fallback for old/standalone enrollments (no dialogue_id) ---
+                elif not dialogue_id:
+                    ac_emo = meta.get("acoustic_emotion", "Unknown")
+                    txt_emo = meta.get("text_emotion", "Unknown")
+                    context_lines.append(f"Author: {meta.get('user_id', 'Unknown')} | Vocal Tone: {ac_emo} | Semantic Tone: {txt_emo} | Statement: \"{match.get('text', '')}\"")
+                    
         context_lines.append("")
 
         final_context = "\n".join(context_lines)

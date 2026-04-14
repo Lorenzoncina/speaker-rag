@@ -294,7 +294,9 @@ class _Identification_Service:
                         "audio_file": wav_path, 
                         "data_type": data_type,
                         "session_id": session_id,
-                        "case_id": case_id,       
+                        "case_id": case_id, 
+                        "dialogue_id": str(uuid.uuid4()),    
+                        "utterance_id": 0,  
                         **attributes
                     }
 
