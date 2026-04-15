@@ -1,10 +1,11 @@
 import os
+import re
 import uuid
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from .model_loader import load_audio_models
 from .identification_service import Identification_Service
-from .semantic_service import Semantic_Service 
+from .semantic_service import Semantic_Service
 
 class SpeakerRAG:
     def __init__(self, 
@@ -86,13 +87,82 @@ class SpeakerRAG:
             
         return results
 
-    def build_context(self, audio_paths: List[str], question: str) -> dict:
-        """Processes audio, clusters identities, retrieves semantic history, and builds the Fact Sheet.
+    def extract_speakers_from_question(self, question: str) -> List[str]:
+        """Scans the question for mentions of enrolled user IDs (case-insensitive, whole-word match).
+
+        Returns a list of enrolled user_ids detected in the question text. If none match, returns [].
+        UUID-like identifiers are skipped to avoid spurious matches on random enrollment IDs.
+        """
+        if not question:
+            return []
+
+        try:
+            enrolled = self.audio_service.get_all_enrolled_users()
+        except Exception as e:
+            print(f"Failed to fetch enrolled users for NER: {e}")
+            return []
+
+        if not enrolled:
+            return []
+
+        uuid_pattern = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
+        matched = []
+        for uid in enrolled.keys():
+            if not uid or uuid_pattern.match(str(uid)):
+                continue
+            pattern = r"\b" + re.escape(str(uid)) + r"\b"
+            if re.search(pattern, question, flags=re.IGNORECASE):
+                matched.append(uid)
+        return matched
+
+    def build_context(
+        self,
+        audio_paths: Optional[List[str]] = None,
+        question: str = "",
+    ) -> dict:
+        """Hybrid context builder supporting two modes:
+
+        1. Audio provided -> full pipeline: identification + filtered semantic search.
+        2. No audio -> extract speaker names from the question via NER;
+           if any match, filter by them, else run an unfiltered semantic search.
 
         Returns a dict with:
           - fact_sheet: structured context string for the LLM
           - recommended_prompt: ready-to-use prompt combining the fact sheet and the question
         """
+        if audio_paths:
+            return self._build_context_from_audio(audio_paths=audio_paths, question=question)
+        return self._build_context_from_text(question=question)
+
+    def _build_context_from_text(self, question: str) -> dict:
+        """Text-only context builder. Extracts speaker names from the question via NER;
+        falls back to an unfiltered semantic search if no names match enrolled users."""
+        context_lines = ["=== FACT SHEET: AUDIO FILE RESOLUTION ==="]
+        context_lines.append("No audio provided. This is a text-only query.")
+
+        extracted = self.extract_speakers_from_question(question)
+        if extracted:
+            target_user_ids = extracted
+            resolution_note = f"Speaker filter (extracted from question): {', '.join(target_user_ids)}"
+        else:
+            target_user_ids = []
+            resolution_note = "Speaker filter: none (unfiltered semantic search across all enrolled speakers)."
+
+        context_lines.append(resolution_note)
+        context_lines.append("")
+
+        fact_sheet = self._append_semantic_section(
+            context_lines=context_lines,
+            question=question,
+            target_user_ids=target_user_ids if target_user_ids else None,
+            session_id=None,
+        )
+
+        recommended_prompt = self._build_prompt(fact_sheet=fact_sheet, question=question)
+        return {"fact_sheet": fact_sheet, "recommended_prompt": recommended_prompt}
+
+    def _build_context_from_audio(self, audio_paths: List[str], question: str) -> dict:
+        """Processes audio, clusters identities, retrieves semantic history, and builds the Fact Sheet."""
         session_id = f"session_{uuid.uuid4()}"
         audio_map = {str(uuid.uuid4()): [path] for path in audio_paths}
             
@@ -178,20 +248,45 @@ class SpeakerRAG:
         context_lines.append("")
 
         # --- Semantic Search (Filtered by Identity) ---
+        fact_sheet = self._append_semantic_section(
+            context_lines=context_lines,
+            question=question,
+            target_user_ids=list(identified_users) if identified_users else None,
+            session_id=session_id,
+        )
+
+        # Cleanup
+        self.audio_service.delete_session(session_id)
+
+        recommended_prompt = self._build_prompt(fact_sheet=fact_sheet, question=question)
+        return {"fact_sheet": fact_sheet, "recommended_prompt": recommended_prompt}
+
+    def _append_semantic_section(
+        self,
+        context_lines: List[str],
+        question: str,
+        target_user_ids: Optional[List[str]],
+        session_id: Optional[str],
+    ) -> str:
+        """Runs semantic search, appends the 'Relevant Past Statements' section to context_lines,
+        and returns the final fact sheet string."""
         context_lines.append("=== FACT SHEET: RELEVANT PAST STATEMENTS ===")
         semantic_matches = self.semantic_service.search_by_text(
             query_text=question, top_k=5, session_id=session_id,
-            target_user_ids=list(identified_users) if identified_users else None 
+            target_user_ids=target_user_ids,
         )
-        
+
         if not semantic_matches:
-            context_lines.append("No relevant past statements found for the identified speaker(s).")
+            if target_user_ids:
+                context_lines.append("No relevant past statements found for the identified speaker(s).")
+            else:
+                context_lines.append("No relevant past statements found across the enrolled database.")
         else:
             printed_dialogues = set()
             for match in semantic_matches:
                 meta = match.get("metadata", {})
                 dialogue_id = meta.get("dialogue_id")
-                
+
                 if dialogue_id and dialogue_id not in printed_dialogues:
                     printed_dialogues.add(dialogue_id)
                     try:
@@ -206,25 +301,23 @@ class SpeakerRAG:
                              "txt_emo": d_meta.get("text_emotion", "Unknown")}
                             for doc, d_meta in zip(dialogue_records["documents"], dialogue_records["metadatas"])
                         ], key=lambda x: x["u_id"])
-                        
+
                         context_lines.append(f"\n--- Reconstructed Conversation (Dialogue ID: {dialogue_id}) ---")
                         for turn in turns:
                             prefix = "►" if turn["text"] == match.get("text", "") else " "
                             context_lines.append(f"{prefix} {turn['speaker']} (Vocal: {turn['ac_emo']} | Semantic: {turn['txt_emo']}): \"{turn['text']}\"")
                     except Exception as e:
                         print(f"Failed to reconstruct dialogue {dialogue_id}: {e}")
-                        
+
                 elif not dialogue_id:
                     context_lines.append(f"Author: {meta.get('user_id', 'Unknown')} | Vocal Tone: {meta.get('acoustic_emotion', 'Unknown')} | Statement: \"{match.get('text', '')}\"")
-                    
+
         context_lines.append("")
-        
-        # Cleanup
-        self.audio_service.delete_session(session_id)
+        return "\n".join(context_lines)
 
-        fact_sheet = "\n".join(context_lines)
-
-        recommended_prompt = f"""You are a strict data-reporting AI performing Speaker Resolution.
+    def _build_prompt(self, fact_sheet: str, question: str) -> str:
+        """Builds the recommended system prompt combining the fact sheet and the user question."""
+        return f"""You are a strict data-reporting AI performing Speaker Resolution.
                 You must answer the User Question using strictly the FACT SHEET data provided below.
 
                 {fact_sheet}
@@ -244,8 +337,6 @@ class SpeakerRAG:
                 {question}
 
                 ### Answer:"""
-
-        return {"fact_sheet": fact_sheet, "recommended_prompt": recommended_prompt}
 
     def get_enrolled_users(self) -> dict:
         """Retrieves all enrolled users from the database."""

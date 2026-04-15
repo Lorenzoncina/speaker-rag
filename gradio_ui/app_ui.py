@@ -65,13 +65,16 @@ def list_enrolled_users():
         return f"An error occurred: {str(e)}"
 
 def ask_rag(audio_paths, question):
-    if not audio_paths:
-        return "Please upload probe audio files.", ""
-    
-    # 1. Ask the Backend for the Fact Sheet Context
-    files = [('audios', (os.path.basename(path), open(path, 'rb'), 'audio/wav')) for path in audio_paths]
+    if not question or not question.strip():
+        return "Please provide a question.", ""
+
+    # Hybrid: audio optional. If missing, the backend extracts speaker names from the question.
+    files = None
+    if audio_paths:
+        files = [('audios', (os.path.basename(path), open(path, 'rb'), 'audio/wav')) for path in audio_paths]
+
     data = {'question': question}
-    
+
     try:
         # ---> UPDATED ENDPOINT <---
         response = requests.post(f"{FASTAPI_URL}/rag/retrieve", files=files, data=data)
@@ -157,21 +160,25 @@ with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
         meld_btn.click(fn=ingest_meld_ui, inputs=[], outputs=enroll_output)
         
     with gr.Accordion("🔍 Step 2: Query / Probe Audio", open=True):
-        gr.Markdown("Upload unknown probe files to extract their context from the backend, and let the local UI LLM answer your questions.")
+        gr.Markdown(
+            "Ask a question with or without audio:\n"
+            "- **With audio**: the backend identifies the speaker(s) and filters context by identity.\n"
+            "- **Text only**: the backend scans the question for enrolled speaker names; if any match, it filters by them, otherwise it runs an unfiltered semantic search."
+        )
         with gr.Row():
             with gr.Column():
-                rag_audio = gr.File(label="Upload Probe Audio Files", file_count="multiple", type="filepath")
+                rag_audio = gr.File(label="Upload Probe Audio Files (optional)", file_count="multiple", type="filepath")
                 rag_question = gr.Textbox(
-                    label="Question", 
-                    placeholder="e.g., Are the speakers the same? Why are they upset?"
+                    label="Question",
+                    placeholder="e.g., Are the speakers the same? What did Alice say about the project?"
                 )
                 rag_btn = gr.Button("Extract Context & Ask LLM", variant="primary")
-            
+
             with gr.Column():
                 rag_output = gr.Textbox(label="LLM Response", lines=6)
                 with gr.Accordion("⚙️ View Backend Context (Debug)", open=False):
                     rag_context = gr.Textbox(label="RAG Fact Sheet (Returned by API)", lines=15)
-                
+
         rag_btn.click(fn=ask_rag, inputs=[rag_audio, rag_question], outputs=[rag_output, rag_context])
 
 if __name__ == "__main__":

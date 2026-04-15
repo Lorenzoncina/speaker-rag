@@ -92,31 +92,39 @@ async def rag_index_speaker(
 
 @app.post("/rag/retrieve", tags=["RAG"])
 async def rag_retrieve_context(
-    audios: List[UploadFile] = File(...),
-    question: str = Form(..., description="The user's query to guide the semantic search.")
+    audios: Optional[List[UploadFile]] = File(None),
+    question: str = Form(..., description="The user's query to guide the semantic search."),
 ):
-    """Processes unknown audio files and returns the structured Fact Sheet for an external LLM to consume."""
+    """Builds a context Fact Sheet for an external LLM.
+
+    Hybrid routing:
+      - If audio files are provided: run full pipeline (identification + filtered semantic search).
+      - Else: attempt speaker-name extraction from the question; fall back to unfiltered semantic search.
+    """
     if not rag_system:
         return JSONResponse(status_code=500, content={"error": "Models are still loading."})
 
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_paths = []
-            for i, audio in enumerate(audios):
-                safe_filename = f"{i}_{audio.filename}"
-                tmp_path = os.path.join(tmpdir, safe_filename)
-                with open(tmp_path, "wb") as f:
-                    shutil.copyfileobj(audio.file, f)
-                tmp_paths.append(tmp_path)
+        if audios:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp_paths = []
+                for i, audio in enumerate(audios):
+                    safe_filename = f"{i}_{audio.filename}"
+                    tmp_path = os.path.join(tmpdir, safe_filename)
+                    with open(tmp_path, "wb") as f:
+                        shutil.copyfileobj(audio.file, f)
+                    tmp_paths.append(tmp_path)
 
-            result = rag_system.build_context(audio_paths=tmp_paths, question=question)
+                result = rag_system.build_context(audio_paths=tmp_paths, question=question)
+        else:
+            result = rag_system.build_context(audio_paths=None, question=question)
 
-            return {
-                "question": question,
-                "fact_sheet": result["fact_sheet"],
-                "recommended_prompt": result["recommended_prompt"],
-                "timestamp": datetime.utcnow().isoformat()
-            }
+        return {
+            "question": question,
+            "fact_sheet": result["fact_sheet"],
+            "recommended_prompt": result["recommended_prompt"],
+            "timestamp": datetime.utcnow().isoformat()
+        }
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
