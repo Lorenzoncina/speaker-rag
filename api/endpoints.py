@@ -27,7 +27,6 @@ def startup_event():
     rag_system = SpeakerRAG(
         chroma_dir="./enrolled_data/chroma",
         collection_name="speaker_embeddings",
-        llm_model_id="Qwen/Qwen2-Audio-7B-Instruct",
         device=device
     )
 
@@ -91,39 +90,12 @@ async def rag_index_speaker(
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/llm/direct", tags=["LLM"])
-async def direct_llm_query(
+@app.post("/rag/retrieve", tags=["RAG"])
+async def rag_retrieve_context(
     audios: List[UploadFile] = File(...),
-    question: str = Form(..., description="Ask the LLM directly about the audio.")
+    question: str = Form(..., description="The user's query to guide the semantic search.")
 ):
-    """Passes audio directly to Qwen-Audio without hitting the Vector DB."""
-    if not rag_system:
-        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
-
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_paths = []
-            
-            # THE FIX: Apply safe filenames to the baseline test too!
-            for i, audio in enumerate(audios):
-                safe_filename = f"{i}_{audio.filename}"
-                tmp_path = os.path.join(tmpdir, safe_filename)
-                with open(tmp_path, "wb") as f:
-                    shutil.copyfileobj(audio.file, f)
-                tmp_paths.append(tmp_path)
-
-            answer = rag_system.direct_query(audio_paths=tmp_paths, question=question)
-            
-            return {"question": question, "answer": answer}
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
-@app.post("/rag/ask", tags=["RAG"])
-async def rag_ask_question(
-    audios: List[UploadFile] = File(...),
-    question: str = Form(..., description="Ask the LLM about the speakers in the audio files.")
-):
-    """Processes unknown audio files and uses the LLM to answer your question."""
+    """Processes unknown audio files and returns the structured Fact Sheet for an external LLM to consume."""
     if not rag_system:
         return JSONResponse(status_code=500, content={"error": "Models are still loading."})
 
@@ -131,20 +103,18 @@ async def rag_ask_question(
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_paths = []
             for i, audio in enumerate(audios):
-                # Prepend the index so files with the same name don't overwrite each other!
                 safe_filename = f"{i}_{audio.filename}"
                 tmp_path = os.path.join(tmpdir, safe_filename)
-                
                 with open(tmp_path, "wb") as f:
                     shutil.copyfileobj(audio.file, f)
                 tmp_paths.append(tmp_path)
 
-            answer, context = rag_system.query(audio_paths=tmp_paths, question=question)
-            
+            result = rag_system.build_context(audio_paths=tmp_paths, question=question)
+
             return {
-                "question": question, 
-                "answer": answer,
-                "context": context,
+                "question": question,
+                "fact_sheet": result["fact_sheet"],
+                "recommended_prompt": result["recommended_prompt"],
                 "timestamp": datetime.utcnow().isoformat()
             }
     except Exception as e:
