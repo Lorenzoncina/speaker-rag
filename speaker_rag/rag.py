@@ -119,6 +119,7 @@ class SpeakerRAG:
         self,
         audio_paths: Optional[List[str]] = None,
         question: str = "",
+        conversation_history: Optional[List[Dict[str, str]]] = None,
     ) -> dict:
         """Hybrid context builder supporting two modes:
 
@@ -126,15 +127,31 @@ class SpeakerRAG:
         2. No audio -> extract speaker names from the question via NER;
            if any match, filter by them, else run an unfiltered semantic search.
 
+        Parameters:
+        - conversation_history: optional list of past {"question": str, "answer": str} pairs.
+          When provided, it is rendered into the recommended prompt as prior-turn context.
+          The pipeline never stores it — memory is the caller's responsibility.
+
         Returns a dict with:
           - fact_sheet: structured context string for the LLM
-          - recommended_prompt: ready-to-use prompt combining the fact sheet and the question
+          - recommended_prompt: ready-to-use prompt combining the fact sheet, history, and question
         """
         if audio_paths:
-            return self._build_context_from_audio(audio_paths=audio_paths, question=question)
-        return self._build_context_from_text(question=question)
+            return self._build_context_from_audio(
+                audio_paths=audio_paths,
+                question=question,
+                conversation_history=conversation_history,
+            )
+        return self._build_context_from_text(
+            question=question,
+            conversation_history=conversation_history,
+        )
 
-    def _build_context_from_text(self, question: str) -> dict:
+    def _build_context_from_text(
+        self,
+        question: str,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+    ) -> dict:
         """Text-only context builder. Extracts speaker names from the question via NER;
         falls back to an unfiltered semantic search if no names match enrolled users."""
         context_lines = ["=== FACT SHEET: AUDIO FILE RESOLUTION ==="]
@@ -158,10 +175,19 @@ class SpeakerRAG:
             session_id=None,
         )
 
-        recommended_prompt = self._build_prompt(fact_sheet=fact_sheet, question=question)
+        recommended_prompt = self._build_prompt(
+            fact_sheet=fact_sheet,
+            question=question,
+            conversation_history=conversation_history,
+        )
         return {"fact_sheet": fact_sheet, "recommended_prompt": recommended_prompt}
 
-    def _build_context_from_audio(self, audio_paths: List[str], question: str) -> dict:
+    def _build_context_from_audio(
+        self,
+        audio_paths: List[str],
+        question: str,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+    ) -> dict:
         """Processes audio, clusters identities, retrieves semantic history, and builds the Fact Sheet."""
         session_id = f"session_{uuid.uuid4()}"
         audio_map = {str(uuid.uuid4()): [path] for path in audio_paths}
@@ -258,7 +284,11 @@ class SpeakerRAG:
         # Cleanup
         self.audio_service.delete_session(session_id)
 
-        recommended_prompt = self._build_prompt(fact_sheet=fact_sheet, question=question)
+        recommended_prompt = self._build_prompt(
+            fact_sheet=fact_sheet,
+            question=question,
+            conversation_history=conversation_history,
+        )
         return {"fact_sheet": fact_sheet, "recommended_prompt": recommended_prompt}
 
     def _append_semantic_section(
@@ -315,8 +345,29 @@ class SpeakerRAG:
         context_lines.append("")
         return "\n".join(context_lines)
 
-    def _build_prompt(self, fact_sheet: str, question: str) -> str:
-        """Builds the recommended system prompt combining the fact sheet and the user question."""
+    def _build_prompt(
+        self,
+        fact_sheet: str,
+        question: str,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+    ) -> str:
+        """Builds the recommended system prompt combining the fact sheet, optional
+        prior conversation turns, and the current user question."""
+        history_block = ""
+        if conversation_history:
+            rendered_turns = []
+            for i, turn in enumerate(conversation_history, start=1):
+                q = (turn.get("question") or "").strip()
+                a = (turn.get("answer") or "").strip()
+                if not q and not a:
+                    continue
+                rendered_turns.append(f"Turn {i}:\nUser: {q}\nAssistant: {a}")
+            if rendered_turns:
+                history_block = (
+                    "\n\n### Conversation History (prior turns, for context only):\n"
+                    + "\n\n".join(rendered_turns)
+                )
+
         return f"""You are a strict data-reporting AI performing Speaker Resolution.
                 You must answer the User Question using strictly the FACT SHEET data provided below.
 
@@ -329,6 +380,8 @@ class SpeakerRAG:
                 4. Use the "Emotion" tags to explain HOW the speaker was feeling.
                 5. EMOTION EVALUATION: The "Current Utterance Analysis" emotion tags are generated by imperfect zero-shot AI. Do NOT blindly trust them.
                 6. CONTEXTUAL REASONING: You must read the "Reconstructed Conversations" to understand the speaker's history. If the past dialogue shows the speaker was arguing, sarcastic, annoyed, etc., you must correct the imperfect zero-shot tags and state their TRUE emotion based on that history.
+                7. CONVERSATION HISTORY: If prior turns are provided below, use them to resolve follow-up references (e.g., "he", "that speaker", "the previous one"), but the FACT SHEET above remains the source of truth.
+{history_block}
 
                 MANDATORY REASONING FORMAT:
                 If asked if speakers are the same, start by explicitly stating the Identity of each track.

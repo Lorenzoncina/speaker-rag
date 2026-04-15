@@ -1,4 +1,5 @@
 import os
+import json
 import uuid
 import shutil
 import tempfile
@@ -94,15 +95,31 @@ async def rag_index_speaker(
 async def rag_retrieve_context(
     audios: Optional[List[UploadFile]] = File(None),
     question: str = Form(..., description="The user's query to guide the semantic search."),
+    conversation_history: Optional[str] = Form(
+        None,
+        description='Optional JSON string: list of {"question": str, "answer": str} past turns.'
+    ),
 ):
     """Builds a context Fact Sheet for an external LLM.
 
     Hybrid routing:
       - If audio files are provided: run full pipeline (identification + filtered semantic search).
       - Else: attempt speaker-name extraction from the question; fall back to unfiltered semantic search.
+
+    The optional conversation_history is rendered into the recommended prompt as prior-turn context.
+    The backend does not persist it — callers are responsible for maintaining and resetting memory.
     """
     if not rag_system:
         return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+
+    parsed_history = None
+    if conversation_history:
+        try:
+            parsed_history = json.loads(conversation_history)
+            if not isinstance(parsed_history, list):
+                parsed_history = None
+        except Exception:
+            parsed_history = None
 
     try:
         if audios:
@@ -115,9 +132,17 @@ async def rag_retrieve_context(
                         shutil.copyfileobj(audio.file, f)
                     tmp_paths.append(tmp_path)
 
-                result = rag_system.build_context(audio_paths=tmp_paths, question=question)
+                result = rag_system.build_context(
+                    audio_paths=tmp_paths,
+                    question=question,
+                    conversation_history=parsed_history,
+                )
         else:
-            result = rag_system.build_context(audio_paths=None, question=question)
+            result = rag_system.build_context(
+                audio_paths=None,
+                question=question,
+                conversation_history=parsed_history,
+            )
 
         return {
             "question": question,

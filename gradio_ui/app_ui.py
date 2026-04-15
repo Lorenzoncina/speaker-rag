@@ -1,4 +1,5 @@
 import os
+import json
 import gradio as gr
 import requests
 import torch
@@ -64,9 +65,11 @@ def list_enrolled_users():
     except Exception as e:
         return f"An error occurred: {str(e)}"
 
-def ask_rag(audio_paths, question):
+def ask_rag(audio_paths, question, history):
+    history = history or []
+
     if not question or not question.strip():
-        return "Please provide a question.", ""
+        return "Please provide a question.", "", history, _format_history(history)
 
     # Hybrid: audio optional. If missing, the backend extracts speaker names from the question.
     files = None
@@ -74,39 +77,56 @@ def ask_rag(audio_paths, question):
         files = [('audios', (os.path.basename(path), open(path, 'rb'), 'audio/wav')) for path in audio_paths]
 
     data = {'question': question}
+    if history:
+        data['conversation_history'] = json.dumps(history)
 
     try:
-        # ---> UPDATED ENDPOINT <---
         response = requests.post(f"{FASTAPI_URL}/rag/retrieve", files=files, data=data)
         if response.status_code == 200:
             res_json = response.json()
-            
+
             fact_sheet = res_json.get('fact_sheet', "No context provided by the backend.")
             recommended_prompt = res_json.get('recommended_prompt', "")
-            
+
             if not recommended_prompt:
-                return "Error: Backend did not return a prompt.", fact_sheet
-                
-            # 2. Pass the Context to OUR local UI LLM
+                return "Error: Backend did not return a prompt.", fact_sheet, history, _format_history(history)
+
             messages = [
                 {"role": "system", "content": "You are a helpful and precise analytical assistant."},
                 {"role": "user", "content": recommended_prompt}
             ]
-            
+
             formatted_prompt = llm_pipeline.tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
-            
+
             outputs = llm_pipeline(formatted_prompt, max_new_tokens=300, temperature=0.1)
-            final_answer = outputs[0]["generated_text"][len(formatted_prompt):]
-            
-            return final_answer.strip(), fact_sheet
-            
+            final_answer = outputs[0]["generated_text"][len(formatted_prompt):].strip()
+
+            new_history = history + [{"question": question, "answer": final_answer}]
+            return final_answer, fact_sheet, new_history, _format_history(new_history)
+
         else:
-            return f"Error {response.status_code}:\n{response.text}", "Error fetching context."
-            
+            err = f"Error {response.status_code}:\n{response.text}"
+            return err, "Error fetching context.", history, _format_history(history)
+
     except Exception as e:
-        return f"An error occurred: {str(e)}", ""
+        return f"An error occurred: {str(e)}", "", history, _format_history(history)
+
+
+def _format_history(history):
+    if not history:
+        return "(no prior turns)"
+    lines = []
+    for i, turn in enumerate(history, start=1):
+        lines.append(f"Turn {i}")
+        lines.append(f"  Q: {turn.get('question', '')}")
+        lines.append(f"  A: {turn.get('answer', '')}")
+    return "\n".join(lines)
+
+
+def reset_history():
+    return [], _format_history([])
 
 def clear_rag():
     try:
@@ -163,8 +183,12 @@ with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
         gr.Markdown(
             "Ask a question with or without audio:\n"
             "- **With audio**: the backend identifies the speaker(s) and filters context by identity.\n"
-            "- **Text only**: the backend scans the question for enrolled speaker names; if any match, it filters by them, otherwise it runs an unfiltered semantic search."
+            "- **Text only**: the backend scans the question for enrolled speaker names; if any match, it filters by them, otherwise it runs an unfiltered semantic search.\n\n"
+            "Prior Q/A turns are stored client-side and sent along with each new question so the LLM can resolve follow-up references. Use **Reset Memory** to start a fresh conversation."
         )
+
+        conversation_state = gr.State([])
+
         with gr.Row():
             with gr.Column():
                 rag_audio = gr.File(label="Upload Probe Audio Files (optional)", file_count="multiple", type="filepath")
@@ -172,14 +196,26 @@ with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
                     label="Question",
                     placeholder="e.g., Are the speakers the same? What did Alice say about the project?"
                 )
-                rag_btn = gr.Button("Extract Context & Ask LLM", variant="primary")
+                with gr.Row():
+                    rag_btn = gr.Button("Extract Context & Ask LLM", variant="primary")
+                    reset_btn = gr.Button("🧹 Reset Memory", variant="stop")
 
             with gr.Column():
                 rag_output = gr.Textbox(label="LLM Response", lines=6)
+                history_display = gr.Textbox(label="Conversation Memory", value="(no prior turns)", lines=8, interactive=False)
                 with gr.Accordion("⚙️ View Backend Context (Debug)", open=False):
                     rag_context = gr.Textbox(label="RAG Fact Sheet (Returned by API)", lines=15)
 
-        rag_btn.click(fn=ask_rag, inputs=[rag_audio, rag_question], outputs=[rag_output, rag_context])
+        rag_btn.click(
+            fn=ask_rag,
+            inputs=[rag_audio, rag_question, conversation_state],
+            outputs=[rag_output, rag_context, conversation_state, history_display],
+        )
+        reset_btn.click(
+            fn=reset_history,
+            inputs=[],
+            outputs=[conversation_state, history_display],
+        )
 
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860)
