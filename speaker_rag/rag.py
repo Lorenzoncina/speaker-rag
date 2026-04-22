@@ -6,34 +6,50 @@ from typing import List, Dict, Optional
 from .model_loader import load_audio_models
 from .identification_service import Identification_Service
 from .semantic_service import Semantic_Service
+from .diarization_service import Diarization_Service, parse_vtt
 
 class SpeakerRAG:
-    def __init__(self, 
-                 chroma_dir: str = "./enrolled_data/chroma", 
+    def __init__(self,
+                 chroma_dir: str = "./enrolled_data/chroma",
                  collection_name: str = "speaker_embeddings",
                  semantic_collection_name: str = "semantic_embeddings",
-                 device: str = "cuda"):
+                 device: str = "cuda",
+                 hf_auth_token: str = None):
         """Initializes the Dual-RAG System (Speaker ID + Semantic) without a hardcoded LLM."""
         print(f"Initializing SpeakerRAG Engine on device: {device}...")
-        
+
         audio_models = load_audio_models(device=device)
         semantic_model = audio_models.pop("semantic_model")
-        
+
         self.audio_service = Identification_Service(
             **audio_models,
             device=device,
             chroma_client=chroma_dir,
             collection_name=collection_name
         )
-        
+
         self.semantic_service = Semantic_Service(
             semantic_model=semantic_model,
             chroma_client=chroma_dir,
             collection_name=semantic_collection_name
         )
-        
+
+        self._diarization_embedding_model = audio_models["embedding_model"]
+        self._hf_auth_token = hf_auth_token
+        self._diarization_service = None  # Lazy-loaded on first use
+
         self.device = device
         print("SpeakerRAG initialization complete. Ready to build context.")
+
+    @property
+    def diarization_service(self):
+        if self._diarization_service is None:
+            self._diarization_service = Diarization_Service(
+                embedding_model=self._diarization_embedding_model,
+                device=self.device,
+                hf_auth_token=self._hf_auth_token,
+            )
+        return self._diarization_service
     
     def clear_database(self) -> dict:
         """Clears all stored speakers and semantics from the vector databases."""
@@ -86,6 +102,119 @@ class SpeakerRAG:
                 self.semantic_service.index_transcriptions(sem_ids, sem_transcripts, sem_metas)
             
         return results
+
+    def index_conversation(
+        self,
+        audio_path: str,
+        speaker_map: Optional[Dict[str, str]] = None,
+        num_speakers: Optional[int] = None,
+        vtt_path: Optional[str] = None,
+    ) -> dict:
+        """Enrolls a full multi-speaker conversation into the system.
+
+        Pipeline:
+          1. Diarize the audio (VAD + speaker turn segmentation), or use VTT turns if provided.
+          2. Extract Titanet embeddings per segment.
+          3. Cluster segments into speaker groups (or apply speaker_map / VTT names).
+          4. Match cluster centroids against enrolled speakers for cross-call identity.
+          5. Extract audio attributes (transcription, emotion, etc.) per segment.
+             If VTT provides transcriptions, those are used instead of re-running Whisper.
+          6. Enroll each segment into both the speaker and semantic collections.
+
+        Parameters:
+        - audio_path: path to the full conversation audio.
+        - speaker_map: optional dict mapping pyannote labels to known names.
+        - num_speakers: optional hint for the number of speakers.
+        - vtt_path: optional path to a WebVTT (.vtt) file (e.g. from Teams/Meet).
+                    When provided, pyannote is skipped; speaker names and timestamps
+                    come from the VTT, and transcriptions are carried over.
+
+        Returns a dict with status, dialogue_id, identity_map, and per-segment enrollment results.
+        """
+        vtt_turns = None
+        if vtt_path:
+            vtt_turns = parse_vtt(vtt_path)
+            if not vtt_turns:
+                print(f"[Conversation] VTT file was empty or unparseable: {vtt_path}")
+
+        diar_result = self.diarization_service.process_conversation(
+            audio_path=audio_path,
+            speaker_map=speaker_map,
+            num_speakers=num_speakers,
+            identification_service=self.audio_service,
+            vtt_turns=vtt_turns,
+        )
+
+        dialogue_id = diar_result["dialogue_id"]
+        segments = diar_result["segments"]
+        identity_map = diar_result["identity_map"]
+
+        if not segments:
+            return {
+                "status": "success",
+                "dialogue_id": dialogue_id,
+                "message": "No speech segments found in the audio.",
+                "identity_map": identity_map,
+                "enrolled_segments": 0,
+            }
+
+        user_audios_map: Dict[str, List[str]] = {}
+        seg_lookup: Dict[str, Dict[str, Any]] = {}
+        for seg in segments:
+            uid = seg["identity"]
+            path = seg["segment_path"]
+            user_audios_map.setdefault(uid, []).append(path)
+            seg_lookup[path] = seg
+
+        session_id = f"conv_{dialogue_id}"
+        extraction_results = self.audio_service.extract_attributes(
+            user_audios_map=user_audios_map,
+            data_type="enroll",
+            session_id=session_id,
+        )
+
+        enrolled_count = 0
+        for uid, res_list in extraction_results.items():
+            sem_ids, sem_transcripts, sem_metas = [], [], []
+
+            for res in res_list:
+                chroma_id = res["id"]
+                seg_info = seg_lookup.get(res["filepath"], {})
+
+                # Prefer VTT transcription over Whisper when available
+                vtt_transcript = seg_info.get("vtt_transcription", "")
+                whisper_transcript = res["attributes"].pop("transcription", "")
+                transcription = vtt_transcript if vtt_transcript else whisper_transcript
+
+                if transcription:
+                    sem_ids.append(chroma_id)
+                    sem_transcripts.append(transcription)
+                    meta = {
+                        "user_id": uid,
+                        "audio_file": res["filepath"],
+                        "data_type": "enroll",
+                        "session_id": session_id,
+                        "dialogue_id": dialogue_id,
+                        "utterance_id": seg_info.get("utterance_id", 0),
+                    }
+                    meta.update(res["attributes"])
+                    if vtt_transcript:
+                        meta["transcription"] = vtt_transcript
+                    sem_metas.append(meta)
+
+                enrolled_count += 1
+
+            if sem_ids:
+                self.semantic_service.index_transcriptions(sem_ids, sem_transcripts, sem_metas)
+
+        print(f"[Conversation] Enrolled {enrolled_count} segments from dialogue {dialogue_id}.")
+
+        return {
+            "status": "success",
+            "dialogue_id": dialogue_id,
+            "identity_map": identity_map,
+            "enrolled_segments": enrolled_count,
+        }
 
     def extract_speakers_from_question(self, question: str) -> List[str]:
         """Scans the question for mentions of enrolled user IDs (case-insensitive, whole-word match).

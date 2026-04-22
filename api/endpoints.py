@@ -23,12 +23,14 @@ rag_system = None
 def startup_event():
     global rag_system
     device = os.environ.get("DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
+    hf_auth_token = os.environ.get("HF_AUTH_TOKEN", None)
     print(f"Starting Speaker RAG API on device: {device}")
-    
+
     rag_system = SpeakerRAG(
         chroma_dir="./enrolled_data/chroma",
         collection_name="speaker_embeddings",
-        device=device
+        device=device,
+        hf_auth_token=hf_auth_token,
     )
 
 @app.get("/health", tags=["General"])
@@ -87,6 +89,66 @@ async def rag_index_speaker(
             result = rag_system.index_audio(audio_paths=tmp_paths, user_ids=user_ids)
             return result
             
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/rag/index_conversation", tags=["RAG"])
+async def rag_index_conversation(
+    audio: UploadFile = File(...),
+    vtt_file: Optional[UploadFile] = File(
+        None,
+        description="Optional WebVTT (.vtt) transcript file (e.g. from Microsoft Teams). "
+                    "When provided, pyannote diarization is skipped entirely — speaker names "
+                    "and timestamps come from the VTT."
+    ),
+    speaker_map: Optional[str] = Form(
+        None,
+        description='Optional JSON dict mapping pyannote labels to names, e.g. {"SPEAKER_00": "Alice", "SPEAKER_01": "Bob"}. Ignored if a VTT file is provided.'
+    ),
+    num_speakers: Optional[int] = Form(None, description="Optional hint for the number of speakers in the conversation. Ignored if a VTT file is provided."),
+):
+    """Ingests a full multi-speaker conversation (e.g. a Teams call or phone recording).
+
+    Three modes:
+      1. VTT file provided: timestamps + speaker names + transcriptions come from the VTT.
+         Pyannote is skipped. This is the most accurate path for Teams/Meet recordings.
+      2. Speaker map JSON provided: pyannote runs diarization, then the JSON maps cluster
+         labels to real names (clustering is skipped).
+      3. Neither: full pyannote diarization + agglomerative clustering.
+    """
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+
+    parsed_map = None
+    if speaker_map:
+        try:
+            parsed_map = json.loads(speaker_map)
+            if not isinstance(parsed_map, dict):
+                parsed_map = None
+        except Exception:
+            parsed_map = None
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            safe_filename = f"conversation_{audio.filename}"
+            tmp_path = os.path.join(tmpdir, safe_filename)
+            with open(tmp_path, "wb") as f:
+                shutil.copyfileobj(audio.file, f)
+
+            vtt_path = None
+            if vtt_file:
+                vtt_path = os.path.join(tmpdir, vtt_file.filename)
+                with open(vtt_path, "wb") as f:
+                    shutil.copyfileobj(vtt_file.file, f)
+
+            result = rag_system.index_conversation(
+                audio_path=tmp_path,
+                speaker_map=parsed_map,
+                num_speakers=num_speakers,
+                vtt_path=vtt_path,
+            )
+            return result
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 

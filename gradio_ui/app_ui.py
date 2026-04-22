@@ -179,6 +179,74 @@ with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
         clear_btn.click(fn=clear_rag, inputs=[], outputs=enroll_output)
         meld_btn.click(fn=ingest_meld_ui, inputs=[], outputs=enroll_output)
         
+    with gr.Accordion("🎙️ Step 1b: Conversation Enrollment (Diarization)", open=False):
+        gr.Markdown(
+            "Upload a full multi-speaker conversation (e.g. a Teams call, phone recording). "
+            "The backend diarizes the audio, clusters speakers, matches them against enrolled "
+            "identities, and enrolls each segment.\n\n"
+            "- **VTT file** (recommended for Teams/Meet): upload the `.vtt` transcript file. "
+            "Speaker names, timestamps, and transcriptions are extracted directly — pyannote "
+            "diarization is skipped entirely.\n"
+            "- **Speaker Map** (optional JSON): manual mapping of pyannote labels to names. "
+            "Ignored if a VTT file is provided.\n"
+            "- **Num speakers** (optional): hint for the clustering algorithm. "
+            "Ignored if a VTT file is provided."
+        )
+        with gr.Row():
+            with gr.Column():
+                conv_audio = gr.File(label="Upload Conversation Audio", file_count="single", type="filepath")
+                conv_vtt = gr.File(label="Upload VTT Transcript (optional, e.g. from Teams)", file_count="single", type="filepath")
+                conv_speaker_map = gr.Textbox(
+                    label="Speaker Map (optional JSON, ignored if VTT provided)",
+                    placeholder='e.g. {"SPEAKER_00": "Alice", "SPEAKER_01": "Bob"}',
+                )
+                conv_num_speakers = gr.Number(
+                    label="Number of Speakers (optional, ignored if VTT provided)",
+                    precision=0,
+                    value=None,
+                )
+                conv_btn = gr.Button("🎙️ Diarize & Enroll Conversation", variant="primary")
+            with gr.Column():
+                conv_output = gr.Textbox(label="Conversation Enrollment Result", lines=12)
+
+        def enroll_conversation(audio_path, vtt_path, speaker_map_str, num_spk):
+            if not audio_path:
+                return "Please upload a conversation audio file."
+
+            files = [('audio', (os.path.basename(audio_path), open(audio_path, 'rb'), 'audio/wav'))]
+            if vtt_path:
+                files.append(('vtt_file', (os.path.basename(vtt_path), open(vtt_path, 'rb'), 'text/vtt')))
+
+            data = {}
+            if not vtt_path:
+                if speaker_map_str and speaker_map_str.strip():
+                    data['speaker_map'] = speaker_map_str.strip()
+                if num_spk is not None and int(num_spk) >= 2:
+                    data['num_speakers'] = int(num_spk)
+
+            try:
+                response = requests.post(f"{FASTAPI_URL}/rag/index_conversation", files=files, data=data)
+                if response.status_code == 200:
+                    res = response.json()
+                    lines = [
+                        f"Dialogue ID: {res.get('dialogue_id', 'N/A')}",
+                        f"Enrolled Segments: {res.get('enrolled_segments', 0)}",
+                        f"Identity Map:",
+                    ]
+                    for cluster, identity in res.get('identity_map', {}).items():
+                        lines.append(f"  {cluster} -> {identity}")
+                    return "\n".join(lines)
+                else:
+                    return f"Error {response.status_code}:\n{response.text}"
+            except Exception as e:
+                return f"An error occurred: {str(e)}"
+
+        conv_btn.click(
+            fn=enroll_conversation,
+            inputs=[conv_audio, conv_vtt, conv_speaker_map, conv_num_speakers],
+            outputs=conv_output,
+        )
+
     with gr.Accordion("🔍 Step 2: Query / Probe Audio", open=True):
         gr.Markdown(
             "Ask a question with or without audio:\n"
