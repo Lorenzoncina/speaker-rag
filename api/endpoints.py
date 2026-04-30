@@ -235,7 +235,7 @@ def admin_ingest_meld():
 
     print("Starting MELD Ingestion Bypass...")
     # Limit to 1000 for testing
-    df = pd.read_csv(csv_path).head(1000)
+    df = pd.read_csv(csv_path)#.head(1000)
 
     # Access the active services directly
     audio_svc = rag_system.audio_service

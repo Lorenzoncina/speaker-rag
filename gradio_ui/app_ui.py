@@ -1,12 +1,26 @@
 import os
+import sys
 import json
+from pathlib import Path
 import gradio as gr
 import requests
 import torch
+import numpy as np
 from transformers import pipeline
+
+# Allow importing from the sibling `tests/` package.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tests.meld_pairs import build_pairs, load_pairs, DEFAULT_OUT as DEFAULT_PAIRS_PATH
+from tests.eval_speaker_verification import (
+    run_experiment_direct_audio,
+    run_experiment_rag_text,
+    save_results,
+    format_summary,
+)
 
 # --- Configuration ---
 FASTAPI_URL = "http://127.0.0.1:8006" # fbk server (requires SSH Port Forwarding)
+EVAL_RESULTS_DIR = str(Path(__file__).resolve().parent.parent / "tests" / "eval_results")
 
 # ==========================================
 # 🧠 "Bring Your Own LLM" Initialization
@@ -20,6 +34,26 @@ llm_pipeline = pipeline(
     torch_dtype=torch.float16
 )
 print("UI LLM Loaded successfully.")
+
+# ==========================================
+# Lazy loader for Qwen2-Audio (only used by Experiment 1)
+# ==========================================
+_qwen_audio_cache = {"model": None, "processor": None}
+
+def get_qwen_audio():
+    if _qwen_audio_cache["model"] is None:
+        from transformers import Qwen2AudioForConditionalGeneration, AutoProcessor
+        print("Lazy-loading Qwen/Qwen2-Audio-7B-Instruct ...")
+        _qwen_audio_cache["processor"] = AutoProcessor.from_pretrained(
+            "Qwen/Qwen2-Audio-7B-Instruct"
+        )
+        _qwen_audio_cache["model"] = Qwen2AudioForConditionalGeneration.from_pretrained(
+            "Qwen/Qwen2-Audio-7B-Instruct",
+            device_map="auto",
+            torch_dtype=torch.float16,
+        )
+        print("Qwen2-Audio loaded.")
+    return _qwen_audio_cache["model"], _qwen_audio_cache["processor"]
 
 # ==========================================
 # Speaker RAG API Functions
@@ -148,6 +182,65 @@ def ingest_meld_ui():
             return f"Error {response.status_code}:\n{response.text}"
     except Exception as e:
         return f"An error occurred: {str(e)}"
+
+# ==========================================
+# Speaker Verification Evaluation (MELD dev)
+# ==========================================
+def _ensure_pairs(regenerate: bool):
+    if regenerate or not Path(DEFAULT_PAIRS_PATH).exists():
+        build_pairs(output_path=DEFAULT_PAIRS_PATH)
+    return load_pairs(DEFAULT_PAIRS_PATH)
+
+
+def _slice_pairs(pairs, n):
+    n = int(n)
+    return pairs if n <= 0 else pairs[:n]
+
+
+def run_exp1(n_pairs, regenerate, progress=gr.Progress()):
+    try:
+        pairs = _slice_pairs(_ensure_pairs(regenerate), n_pairs)
+        progress(0, desc=f"Loading Qwen2-Audio (first run only)...")
+        model, processor = get_qwen_audio()
+
+        def cb(done, total):
+            progress(done / max(total, 1), desc=f"Exp 1: {done}/{total} pairs")
+
+        scores, labels = run_experiment_direct_audio(pairs, model, processor, progress_callback=cb)
+        path, _ = save_results(EVAL_RESULTS_DIR, "1", scores, labels,
+                               "Qwen/Qwen2-Audio-7B-Instruct")
+        return format_summary("1", "Qwen/Qwen2-Audio-7B-Instruct", scores, labels, path)
+    except Exception as e:
+        return f"Experiment 1 failed: {e}"
+
+
+def _run_rag_text_exp(experiment_id: str, label: str, n_pairs, regenerate, progress=gr.Progress()):
+    try:
+        pairs = _slice_pairs(_ensure_pairs(regenerate), n_pairs)
+
+        def cb(done, total):
+            progress(done / max(total, 1), desc=f"Exp {experiment_id}: {done}/{total} pairs")
+
+        scores, labels = run_experiment_rag_text(
+            pairs, llm_pipeline, FASTAPI_URL, progress_callback=cb
+        )
+        extra = {"rag": "no_enrollment" if experiment_id == "2" else "meld_train_enrolled"}
+        path, _ = save_results(EVAL_RESULTS_DIR, experiment_id, scores, labels,
+                               "Qwen/Qwen2-7B-Instruct", extra=extra)
+        return format_summary(experiment_id, label, scores, labels, path)
+    except Exception as e:
+        return f"Experiment {experiment_id} failed: {e}"
+
+
+def run_exp2(n_pairs, regenerate, progress=gr.Progress()):
+    return _run_rag_text_exp("2", "Qwen/Qwen2-7B-Instruct + RAG (empty DB)",
+                             n_pairs, regenerate, progress)
+
+
+def run_exp3(n_pairs, regenerate, progress=gr.Progress()):
+    return _run_rag_text_exp("3", "Qwen/Qwen2-7B-Instruct + RAG (MELD train enrolled)",
+                             n_pairs, regenerate, progress)
+
 
 # ==========================================
 # Gradio UI Layout
@@ -284,6 +377,35 @@ with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
             inputs=[],
             outputs=[conversation_state, history_display],
         )
+
+    with gr.Accordion("📊 Step 3: Speaker Verification Evaluation (MELD dev)", open=False):
+        gr.Markdown(
+            "Run the three EER-based speaker-verification experiments on MELD dev pairs.\n\n"
+            "**Recommended workflow:**\n"
+            "1. Click **Clear Entire Database** in Step 1.\n"
+            "2. Run **Experiment 1** (Qwen2-Audio direct — does not touch the DB).\n"
+            "3. Run **Experiment 2** (RAG without enrollment — DB must be empty).\n"
+            "4. Click **🚀 Ingest MELD (Admin)** in Step 1 to enroll the MELD train split.\n"
+            "5. Run **Experiment 3** (RAG with MELD train enrolled).\n\n"
+            "Pairs are generated once (1000 same-speaker + 1000 different-speaker, seed=42) "
+            "and cached. Tick *Regenerate pairs* to rebuild. "
+            "Use *Number of pairs* to limit the run for quick checks; -1 means all 2000."
+        )
+        with gr.Row():
+            eval_n_pairs = gr.Number(label="Number of pairs (-1 = all 2000)", value=200, precision=0)
+            eval_regen = gr.Checkbox(label="Regenerate pairs", value=False)
+
+        with gr.Row():
+            exp1_btn = gr.Button("Experiment 1: Qwen2-Audio direct", variant="primary")
+            exp2_btn = gr.Button("Experiment 2: RAG (empty DB) + text LLM", variant="primary")
+            exp3_btn = gr.Button("Experiment 3: RAG (MELD enrolled) + text LLM", variant="primary")
+
+        eval_output = gr.Textbox(label="Evaluation Result", lines=10)
+
+        exp1_btn.click(fn=run_exp1, inputs=[eval_n_pairs, eval_regen], outputs=eval_output)
+        exp2_btn.click(fn=run_exp2, inputs=[eval_n_pairs, eval_regen], outputs=eval_output)
+        exp3_btn.click(fn=run_exp3, inputs=[eval_n_pairs, eval_regen], outputs=eval_output)
+
 
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860)
