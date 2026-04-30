@@ -7,6 +7,7 @@ import torch
 from datetime import datetime
 from typing import List, Optional
 from fastapi import FastAPI, UploadFile, File, Form
+from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 
 from speaker_rag.rag import SpeakerRAG
@@ -215,6 +216,60 @@ async def rag_retrieve_context(
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+@app.post("/admin/probe_similarity", tags=["Admin"])
+async def probe_similarity(audio: UploadFile = File(...), top_k: int = 20):
+    """Return cosine similarity of a probe audio against all enrolled speaker embeddings.
+
+    Useful for diagnosing why certain speakers are not identified (scores below
+    SIMILARITY_THRESHOLD=0.50 get labeled Unknown_Speaker in the FactSheet).
+    Returns the top_k enrolled embeddings sorted by score descending.
+    """
+    import librosa
+
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models loading"})
+
+    audio_svc = rag_system.audio_service
+    device = audio_svc._device
+    tmp_path = f"/tmp/probe_sim_{uuid.uuid4()}.wav"
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(await audio.read())
+
+        x, sr = librosa.load(tmp_path, sr=16000, mono=True)
+        sig = torch.from_numpy(x).unsqueeze(0).to(device)
+        sig_len = torch.tensor([sig.shape[1]]).to(device)
+        with torch.no_grad():
+            _, emb = audio_svc._embedding_model.forward(
+                input_signal=sig, input_signal_length=sig_len
+            )
+        emb_list = emb.squeeze().cpu().tolist()
+
+        results = audio_svc._collection.query(
+            query_embeddings=[emb_list],
+            n_results=min(top_k, 500),
+            include=["metadatas", "distances"],
+            where={"data_type": "enroll"},
+        )
+
+        matches = []
+        if results["ids"] and results["ids"][0]:
+            for meta, dist in zip(results["metadatas"][0], results["distances"][0]):
+                score = round(1.0 - dist, 4)
+                matches.append({
+                    "speaker_id": meta.get("user_id", "?"),
+                    "score": score,
+                    "audio_file": os.path.basename(meta.get("audio_file", "")),
+                })
+
+        return {"filename": audio.filename, "n_enrolled_returned": len(matches), "matches": matches}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
 @app.get("/admin/ingest_meld", tags=["Admin"])
 def admin_ingest_meld():
     """Temporary backdoor endpoint to ingest MELD using pre-loaded GPU models."""
@@ -308,19 +363,27 @@ def admin_ingest_meld():
     return {"status": "Complete", "enrolled_count": success_count}
 
 
-@app.get("/admin/ingest_voxceleb", tags=["Admin"])
-def admin_ingest_voxceleb(per_speaker: int = 10, seed: int = 42):
-    """Ingest the 40 VoxCeleb1 test speakers (those referenced in Vox1-O.txt)
-    into the RAG database. Picks `per_speaker` random utterances per speaker,
-    EXCLUDING any file used as a probe in Vox1-O.txt to prevent train/test leakage.
-    Each entry's user_id matches the VoxCeleb1 speaker ID (e.g. "id10270").
+class IngestVoxcelebRequest(BaseModel):
+    per_speaker: int = 10
+    seed: int = 42
+    probe_rel_paths: Optional[List[str]] = None
+
+
+@app.post("/admin/ingest_voxceleb", tags=["Admin"])
+def admin_ingest_voxceleb(req: IngestVoxcelebRequest = IngestVoxcelebRequest()):
+    """Ingest the 40 VoxCeleb1 test speakers into the RAG database.
+
+    Picks req.per_speaker random utterances per speaker, EXCLUDING files that
+    appear as probes in the evaluation set.
+
+    req.probe_rel_paths: list of rel-paths (e.g. "id10270/.../00001.wav") to
+      exclude from enrollment.  The UI reads vox1o_pairs.json locally and sends
+      this list, so no shared filesystem between containers is needed.
+      When omitted, ALL files in Vox1-O.txt are excluded (conservative fallback).
     """
-    import os
     import csv
-    import uuid
     import random
     import librosa
-    import torch
 
     if not rag_system:
         return JSONResponse(status_code=500, content={"error": "Models are still loading."})
@@ -334,8 +397,7 @@ def admin_ingest_voxceleb(per_speaker: int = 10, seed: int = 42):
     if not os.path.isdir(wav_root):
         return JSONResponse(status_code=404, content={"error": f"VoxCeleb1 test wavs not found at {wav_root}"})
 
-    # 1. Parse trials -> probe set + speaker set
-    probe_set = set()
+    # 1. Build speaker set from the full trials file
     speakers = set()
     with open(trials_path) as f:
         for line in f:
@@ -343,19 +405,34 @@ def admin_ingest_voxceleb(per_speaker: int = 10, seed: int = 42):
             if len(parts) != 3:
                 continue
             _, a1, a2 = parts
-            probe_set.add(a1)
-            probe_set.add(a2)
             speakers.add(a1.split("/", 1)[0])
             speakers.add(a2.split("/", 1)[0])
+
+    # 2. Build probe_set — use caller-supplied list when available
+    if req.probe_rel_paths:
+        probe_set = set(req.probe_rel_paths)
+        print(f"VoxCeleb1: caller-supplied probe_set ({len(probe_set)} files)")
+    else:
+        probe_set = set()
+        with open(trials_path) as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) != 3:
+                    continue
+                _, a1, a2 = parts
+                probe_set.add(a1)
+                probe_set.add(a2)
+        print(f"VoxCeleb1: full Vox1-O probe_set ({len(probe_set)} files) — no list supplied")
+
     speakers = sorted(speakers)
     print(f"VoxCeleb1: {len(speakers)} speakers, {len(probe_set)} probe files excluded.")
 
-    # 2. Optional metadata (gender, nationality, real name)
+    # 3. Optional metadata (gender, nationality, real name)
     speaker_meta = {}
     if os.path.exists(meta_path):
         with open(meta_path) as f:
             reader = csv.reader(f, delimiter="\t")
-            next(reader, None)  # header
+            next(reader, None)
             for row in reader:
                 if len(row) >= 5:
                     spk_id, name, gender, nationality, _set = (c.strip() for c in row[:5])
@@ -365,8 +442,8 @@ def admin_ingest_voxceleb(per_speaker: int = 10, seed: int = 42):
                         "nationality": nationality,
                     }
 
-    # 3. Select enrollment files per speaker
-    rng = random.Random(seed)
+    # 4. Select enrollment files per speaker
+    rng = random.Random(req.seed)
     enrollment = {}
     for spk in speakers:
         spk_dir = os.path.join(wav_root, spk)
@@ -377,19 +454,20 @@ def admin_ingest_voxceleb(per_speaker: int = 10, seed: int = 42):
             vp = os.path.join(spk_dir, video_dir)
             if not os.path.isdir(vp):
                 continue
-            for wav in sorted(os.listdir(vp)):
-                if wav.endswith(".wav"):
-                    all_files.append(f"{spk}/{video_dir}/{wav}")
+            for wav_file in sorted(os.listdir(vp)):
+                if wav_file.endswith(".wav"):
+                    all_files.append(f"{spk}/{video_dir}/{wav_file}")
         candidates = [f for f in all_files if f not in probe_set]
         if not candidates:
+            print(f"  [warn] {spk}: no enrollment candidates after probe exclusion — skipped")
             continue
-        chosen = candidates if len(candidates) <= per_speaker else rng.sample(candidates, per_speaker)
+        chosen = candidates if len(candidates) <= req.per_speaker else rng.sample(candidates, req.per_speaker)
         enrollment[spk] = chosen
 
     total_files = sum(len(v) for v in enrollment.values())
     print(f"VoxCeleb1: enrolling {total_files} files across {len(enrollment)} speakers...")
 
-    # 4. Enroll into both collections
+    # 5. Enroll into both collections
     audio_svc = rag_system.audio_service
     sem_svc = rag_system.semantic_service
     device = audio_svc._device
@@ -400,7 +478,6 @@ def admin_ingest_voxceleb(per_speaker: int = 10, seed: int = 42):
         for rel_path in rel_paths:
             audio_path = os.path.join(wav_root, rel_path)
             try:
-                # Titanet acoustic embedding
                 x, sr = librosa.load(audio_path, sr=16000, mono=True)
                 sig = torch.from_numpy(x).unsqueeze(0).to(device)
                 sig_len = torch.tensor([sig.shape[1]]).to(device)
@@ -410,7 +487,6 @@ def admin_ingest_voxceleb(per_speaker: int = 10, seed: int = 42):
                     )
                 spk_emb_vector = spk_embedding.squeeze().cpu().tolist()
 
-                # Placeholder text (VoxCeleb has no transcripts) -> semantic embedding
                 text = f"VoxCeleb1 utterance from {sm.get('real_name', spk_id)}"
                 sem_emb_vector = sem_svc._model.encode(text).tolist()
 
@@ -428,18 +504,8 @@ def admin_ingest_voxceleb(per_speaker: int = 10, seed: int = 42):
                     "nationality": sm.get("nationality", ""),
                     "source": "voxceleb1_test",
                 }
-
-                audio_svc._collection.add(
-                    ids=[shared_uuid],
-                    embeddings=[spk_emb_vector],
-                    metadatas=[metadata],
-                )
-                sem_svc._collection.add(
-                    ids=[shared_uuid],
-                    embeddings=[sem_emb_vector],
-                    metadatas=[metadata],
-                    documents=[text],
-                )
+                audio_svc._collection.add(ids=[shared_uuid], embeddings=[spk_emb_vector], metadatas=[metadata])
+                sem_svc._collection.add(ids=[shared_uuid], embeddings=[sem_emb_vector], metadatas=[metadata], documents=[text])
                 success_count += 1
                 if success_count % 50 == 0:
                     print(f"  ...{success_count}/{total_files} enrolled")
@@ -451,5 +517,5 @@ def admin_ingest_voxceleb(per_speaker: int = 10, seed: int = 42):
         "status": "Complete",
         "enrolled_count": success_count,
         "n_speakers": len(enrollment),
-        "per_speaker": per_speaker,
+        "per_speaker": req.per_speaker,
     }

@@ -190,16 +190,32 @@ def ingest_meld_ui():
 
 
 def ingest_voxceleb_ui(per_speaker: int = 10):
+    # Read the probe file list from the local pairs JSON and send it in the
+    # request body.  This avoids any shared-filesystem dependency between the
+    # UI container and the backend container.
+    probe_rel_paths = []
+    if Path(DEFAULT_VOX1_PAIRS_PATH).exists():
+        pairs = load_vox1_pairs(DEFAULT_VOX1_PAIRS_PATH)
+        seen = set()
+        for p in pairs:
+            for key in ("audio1_rel", "audio2_rel"):
+                v = p.get(key, "")
+                if v and v not in seen:
+                    seen.add(v)
+                    probe_rel_paths.append(v)
+
+    payload = {"per_speaker": int(per_speaker), "probe_rel_paths": probe_rel_paths}
     try:
-        response = requests.get(
+        response = requests.post(
             f"{FASTAPI_URL}/admin/ingest_voxceleb",
-            params={"per_speaker": int(per_speaker)},
+            json=payload,
             timeout=3600,
         )
         if response.status_code == 200:
             r = response.json()
+            probe_note = f"({len(probe_rel_paths)} probe files excluded)" if probe_rel_paths else "(full Vox1-O fallback)"
             return (
-                f"VoxCeleb1 Ingestion Complete!\n"
+                f"VoxCeleb1 Ingestion Complete! {probe_note}\n"
                 f"Speakers: {r.get('n_speakers', 0)}\n"
                 f"Per speaker: {r.get('per_speaker', 0)}\n"
                 f"Total enrolled: {r.get('enrolled_count', 0)} files."

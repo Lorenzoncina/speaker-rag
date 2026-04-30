@@ -338,7 +338,7 @@ class SpeakerRAG:
 
         context_lines = ["=== FACT SHEET: AUDIO FILE RESOLUTION ==="]
         identified_users = set() 
-        SIMILARITY_THRESHOLD = 0.50
+        SIMILARITY_THRESHOLD = 0.45
 
         # --- Graph-Based Speaker Clustering (Union-Find) ---
         parent = {uid: uid for uid in id_to_uid.values()}

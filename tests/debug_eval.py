@@ -217,6 +217,114 @@ def audit_llr_distribution(results_dir: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# H4: Cosine score distribution for failing speakers
+
+def audit_score_distribution(
+    pairs: List[dict],
+    fastapi_url: str,
+    n_probe: int = 20,
+    threshold: float = 0.50,
+) -> None:
+    """For a sample of pairs, call /admin/probe_similarity and show the actual
+    cosine scores between the probe and the correct enrolled speaker vs the
+    best enrolled speaker overall.  This reveals whether the threshold is the
+    problem (correct speaker at 0.35-0.49) or something deeper (correct speaker
+    at < 0.30 or not enrolled at all).
+    """
+    print("\n" + "=" * 60)
+    print("H4: Cosine score distribution (probe vs enrolled)")
+    print(f"    threshold = {threshold}")
+    print("=" * 60)
+
+    rng = random.Random(1)
+    sample = rng.sample(pairs, min(n_probe, len(pairs)))
+
+    correct_scores = []   # score of probe vs its own enrolled speaker
+    best_scores = []      # score of probe vs best enrolled speaker overall
+    wrong_best_ids = []   # when best != correct, what was the best speaker
+
+    for i, p in enumerate(sample):
+        for side, audio_path, true_spk in [
+            ("A", p["audio1"], p["speaker1"]),
+            ("B", p["audio2"], p["speaker2"]),
+        ]:
+            try:
+                with open(audio_path, "rb") as f:
+                    r = requests.post(
+                        f"{fastapi_url}/admin/probe_similarity",
+                        files=[("audio", (os.path.basename(audio_path), f, "audio/wav"))],
+                        params={"top_k": 50},
+                        timeout=120,
+                    )
+                if r.status_code != 200:
+                    print(f"  [{i}{side}] API error {r.status_code}: {r.text[:100]}")
+                    continue
+                matches = r.json().get("matches", [])
+            except Exception as e:
+                print(f"  [{i}{side}] request failed: {e}")
+                continue
+
+            if not matches:
+                print(f"  [{i}{side}] no enrolled speakers in DB")
+                continue
+
+            # Best overall match
+            best = matches[0]
+            best_score = best["score"]
+            best_id = best["speaker_id"]
+            best_scores.append(best_score)
+
+            # Best match for the correct speaker
+            correct_matches = [m for m in matches if m["speaker_id"] == true_spk]
+            if correct_matches:
+                correct_score = max(m["score"] for m in correct_matches)
+                correct_scores.append(correct_score)
+                above = correct_score >= threshold
+                flag = "OK " if above else f"BELOW({correct_score:.3f}<{threshold})"
+            else:
+                correct_score = None
+                flag = "NOT_ENROLLED"
+
+            wrong = (best_id != true_spk)
+            if wrong and correct_score is not None:
+                wrong_best_ids.append((true_spk, best_id, best_score, correct_score))
+
+            print(
+                f"  [{i:2d}{side}] true={true_spk}  "
+                f"correct_score={correct_score if correct_score is not None else 'N/A':>6}  "
+                f"best={best_id}({best_score:.3f})  {flag}"
+                + ("  *** WRONG BEST ***" if wrong else "")
+            )
+
+    print()
+    if correct_scores:
+        arr = np.array(correct_scores)
+        print(f"  Correct-speaker scores: n={len(arr)}  "
+              f"mean={arr.mean():.3f}  std={arr.std():.3f}  "
+              f"min={arr.min():.3f}  max={arr.max():.3f}")
+        below = (arr < threshold).sum()
+        print(f"  Below threshold ({threshold}): {below}/{len(arr)} = {below/len(arr)*100:.1f}%")
+        pct10 = np.percentile(arr, 10)
+        pct25 = np.percentile(arr, 25)
+        print(f"  10th pct={pct10:.3f}  25th pct={pct25:.3f}")
+        print(f"  => If most below-threshold scores are in [0.35, 0.50), "
+              f"lowering threshold will help.")
+        print(f"  => If most are < 0.35, threshold won't help — deeper Titanet issue.")
+
+    if best_scores:
+        barr = np.array(best_scores)
+        print(f"  Best-enrolled scores:   n={len(barr)}  mean={barr.mean():.3f}  "
+              f"min={barr.min():.3f}  max={barr.max():.3f}")
+
+    if wrong_best_ids:
+        print(f"\n  Cases where best match was a WRONG speaker ({len(wrong_best_ids)}):")
+        for true_spk, best_id, best_score, correct_score in wrong_best_ids[:10]:
+            print(f"    true={true_spk}  got={best_id}({best_score:.3f})  "
+                  f"correct={correct_score:.3f}  "
+                  f"margin={best_score - correct_score:.3f}")
+
+
+# ---------------------------------------------------------------------------
 # Main
 
 def main():
@@ -230,9 +338,11 @@ def main():
                         help="Which benchmark's pairs to audit.")
     parser.add_argument("--results-dir",
                         default=str(Path(__file__).parent / "eval_results"))
-    parser.add_argument("--check", choices=["token", "rag", "dist", "all"], default="all")
+    parser.add_argument("--check", choices=["token", "rag", "dist", "scores", "all"], default="all")
     parser.add_argument("--n-probe", type=int, default=20,
-                        help="Number of audio pairs to probe for RAG audit.")
+                        help="Number of audio pairs to probe for RAG / score audit.")
+    parser.add_argument("--threshold", type=float, default=0.50,
+                        help="Similarity threshold used in rag.py (for score audit display).")
     parser.add_argument("--model", default="Qwen/Qwen2-7B-Instruct")
     args = parser.parse_args()
 
@@ -242,7 +352,9 @@ def main():
     if args.check in ("token", "all"):
         audit_token_ids(args.model)
 
-    if args.check in ("rag", "all"):
+    # Load pairs once (needed for rag + scores checks)
+    pairs = None
+    if args.check in ("rag", "scores", "all"):
         if args.dataset == "vox1":
             from tests.vox1_pairs import load_pairs, DEFAULT_OUT
             pairs_path = args.pairs or DEFAULT_OUT
@@ -256,7 +368,13 @@ def main():
             sys.exit(1)
         pairs = load_pairs(pairs_path)
         print(f"  Using pairs file: {pairs_path} ({len(pairs)} pairs)")
+
+    if args.check in ("rag", "all"):
         audit_rag_matching(pairs, args.fastapi_url, n_probe=args.n_probe)
+
+    if args.check in ("scores",):
+        audit_score_distribution(pairs, args.fastapi_url,
+                                 n_probe=args.n_probe, threshold=args.threshold)
 
 
 if __name__ == "__main__":
