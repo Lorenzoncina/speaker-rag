@@ -306,3 +306,150 @@ def admin_ingest_meld():
 
     print("MELD Ingestion Complete!")
     return {"status": "Complete", "enrolled_count": success_count}
+
+
+@app.get("/admin/ingest_voxceleb", tags=["Admin"])
+def admin_ingest_voxceleb(per_speaker: int = 10, seed: int = 42):
+    """Ingest the 40 VoxCeleb1 test speakers (those referenced in Vox1-O.txt)
+    into the RAG database. Picks `per_speaker` random utterances per speaker,
+    EXCLUDING any file used as a probe in Vox1-O.txt to prevent train/test leakage.
+    Each entry's user_id matches the VoxCeleb1 speaker ID (e.g. "id10270").
+    """
+    import os
+    import csv
+    import uuid
+    import random
+    import librosa
+    import torch
+
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+
+    trials_path = "/app/VoxCeleb1/Vox1-O/Vox1-O.txt"
+    wav_root = "/app/VoxCeleb1/wav/test"
+    meta_path = "/app/VoxCeleb1/vox1_meta.csv"
+
+    if not os.path.exists(trials_path):
+        return JSONResponse(status_code=404, content={"error": f"Vox1-O trials not found at {trials_path}"})
+    if not os.path.isdir(wav_root):
+        return JSONResponse(status_code=404, content={"error": f"VoxCeleb1 test wavs not found at {wav_root}"})
+
+    # 1. Parse trials -> probe set + speaker set
+    probe_set = set()
+    speakers = set()
+    with open(trials_path) as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) != 3:
+                continue
+            _, a1, a2 = parts
+            probe_set.add(a1)
+            probe_set.add(a2)
+            speakers.add(a1.split("/", 1)[0])
+            speakers.add(a2.split("/", 1)[0])
+    speakers = sorted(speakers)
+    print(f"VoxCeleb1: {len(speakers)} speakers, {len(probe_set)} probe files excluded.")
+
+    # 2. Optional metadata (gender, nationality, real name)
+    speaker_meta = {}
+    if os.path.exists(meta_path):
+        with open(meta_path) as f:
+            reader = csv.reader(f, delimiter="\t")
+            next(reader, None)  # header
+            for row in reader:
+                if len(row) >= 5:
+                    spk_id, name, gender, nationality, _set = (c.strip() for c in row[:5])
+                    speaker_meta[spk_id] = {
+                        "real_name": name.replace("_", " "),
+                        "gender_csv": gender,
+                        "nationality": nationality,
+                    }
+
+    # 3. Select enrollment files per speaker
+    rng = random.Random(seed)
+    enrollment = {}
+    for spk in speakers:
+        spk_dir = os.path.join(wav_root, spk)
+        if not os.path.isdir(spk_dir):
+            continue
+        all_files = []
+        for video_dir in sorted(os.listdir(spk_dir)):
+            vp = os.path.join(spk_dir, video_dir)
+            if not os.path.isdir(vp):
+                continue
+            for wav in sorted(os.listdir(vp)):
+                if wav.endswith(".wav"):
+                    all_files.append(f"{spk}/{video_dir}/{wav}")
+        candidates = [f for f in all_files if f not in probe_set]
+        if not candidates:
+            continue
+        chosen = candidates if len(candidates) <= per_speaker else rng.sample(candidates, per_speaker)
+        enrollment[spk] = chosen
+
+    total_files = sum(len(v) for v in enrollment.values())
+    print(f"VoxCeleb1: enrolling {total_files} files across {len(enrollment)} speakers...")
+
+    # 4. Enroll into both collections
+    audio_svc = rag_system.audio_service
+    sem_svc = rag_system.semantic_service
+    device = audio_svc._device
+
+    success_count = 0
+    for spk_id, rel_paths in enrollment.items():
+        sm = speaker_meta.get(spk_id, {})
+        for rel_path in rel_paths:
+            audio_path = os.path.join(wav_root, rel_path)
+            try:
+                # Titanet acoustic embedding
+                x, sr = librosa.load(audio_path, sr=16000, mono=True)
+                sig = torch.from_numpy(x).unsqueeze(0).to(device)
+                sig_len = torch.tensor([sig.shape[1]]).to(device)
+                with torch.no_grad():
+                    _, spk_embedding = audio_svc._embedding_model.forward(
+                        input_signal=sig, input_signal_length=sig_len
+                    )
+                spk_emb_vector = spk_embedding.squeeze().cpu().tolist()
+
+                # Placeholder text (VoxCeleb has no transcripts) -> semantic embedding
+                text = f"VoxCeleb1 utterance from {sm.get('real_name', spk_id)}"
+                sem_emb_vector = sem_svc._model.encode(text).tolist()
+
+                shared_uuid = str(uuid.uuid4())
+                metadata = {
+                    "user_id": spk_id,
+                    "audio_file": rel_path,
+                    "data_type": "enroll",
+                    "transcription": text,
+                    "text_emotion": "Unknown",
+                    "acoustic_emotion": "Unknown",
+                    "language": "en",
+                    "real_name": sm.get("real_name", ""),
+                    "gender_csv": sm.get("gender_csv", ""),
+                    "nationality": sm.get("nationality", ""),
+                    "source": "voxceleb1_test",
+                }
+
+                audio_svc._collection.add(
+                    ids=[shared_uuid],
+                    embeddings=[spk_emb_vector],
+                    metadatas=[metadata],
+                )
+                sem_svc._collection.add(
+                    ids=[shared_uuid],
+                    embeddings=[sem_emb_vector],
+                    metadatas=[metadata],
+                    documents=[text],
+                )
+                success_count += 1
+                if success_count % 50 == 0:
+                    print(f"  ...{success_count}/{total_files} enrolled")
+            except Exception as e:
+                print(f"Failed on {rel_path}: {e}")
+
+    print("VoxCeleb1 Ingestion Complete!")
+    return {
+        "status": "Complete",
+        "enrolled_count": success_count,
+        "n_speakers": len(enrollment),
+        "per_speaker": per_speaker,
+    }

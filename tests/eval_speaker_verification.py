@@ -25,7 +25,11 @@ import requests
 import torch
 from sklearn.metrics import roc_curve
 
-from .meld_pairs import DEFAULT_OUT as DEFAULT_PAIRS_PATH, build_pairs, load_pairs
+from .meld_pairs import (DEFAULT_OUT as DEFAULT_PAIRS_PATH, DEFAULT_OUT_MAIN6,
+                         build_pairs, load_pairs, MAIN6)
+from .vox1_pairs import (DEFAULT_OUT as DEFAULT_VOX1_PAIRS_PATH,
+                          build_pairs as build_vox1_pairs,
+                          load_pairs as load_vox1_pairs)
 
 
 # ---------------------------------------------------------------------------
@@ -68,11 +72,22 @@ def compute_eer(scores: np.ndarray, labels: np.ndarray) -> float:
 # Yes/No token resolution
 
 def _yes_no_ids(tokenizer) -> Tuple[int, int]:
-    yes_ids = tokenizer.encode("Yes", add_special_tokens=False)
-    no_ids = tokenizer.encode("No", add_special_tokens=False)
-    if not yes_ids or not no_ids:
-        raise RuntimeError("Tokenizer produced no tokens for 'Yes'/'No'.")
-    return yes_ids[0], no_ids[0]
+    # After apply_chat_template with add_generation_prompt=True the model begins
+    # its response directly (no leading space). Qwen2 tokenises "Yes" and "No"
+    # as single tokens without a leading-space prefix in that position.
+    # We try both surface forms and take whichever is a single token so we don't
+    # silently read the wrong ID when the tokeniser splits unexpectedly.
+    def _single_token_id(surfaces):
+        for s in surfaces:
+            ids = tokenizer.encode(s, add_special_tokens=False)
+            if len(ids) == 1:
+                return ids[0]
+        # fallback: first token of the first surface
+        return tokenizer.encode(surfaces[0], add_special_tokens=False)[0]
+
+    yes_id = _single_token_id(["Yes", " Yes"])
+    no_id = _single_token_id(["No", " No"])
+    return yes_id, no_id
 
 
 # ---------------------------------------------------------------------------
@@ -147,11 +162,23 @@ def _llr_text_llm(text_pipeline, fact_sheet_a: str, fact_sheet_b: str) -> float:
     inputs = tokenizer(formatted, return_tensors="pt").to(model.device)
 
     with torch.no_grad():
+        # logits[:, -1, :] = distribution over the *first generated token*
+        # (last position of the input predicts what comes next)
         outputs = model(**inputs)
-    logits = outputs.logits[0, -1, :]
-    log_probs = torch.log_softmax(logits.float(), dim=-1)
+    logits = outputs.logits[0, -1, :].float()
+    log_probs = torch.log_softmax(logits, dim=-1)
     yes_id, no_id = _yes_no_ids(tokenizer)
-    return float(log_probs[yes_id] - log_probs[no_id])
+    llr = float(log_probs[yes_id] - log_probs[no_id])
+
+    # Sanity: log top-5 tokens once during first call to catch ID issues early
+    if not hasattr(_llr_text_llm, "_logged"):
+        _llr_text_llm._logged = True
+        top5 = torch.topk(log_probs, 5)
+        top5_decoded = [(tokenizer.decode([i]), round(v, 3))
+                        for i, v in zip(top5.indices.tolist(), top5.values.tolist())]
+        print(f"[debug] first-token top-5: {top5_decoded}  yes_id={yes_id} no_id={no_id}")
+
+    return llr
 
 
 def run_experiment_rag_text(
@@ -250,27 +277,44 @@ def _load_qwen_text(device: str = "cuda"):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pairs", default=DEFAULT_PAIRS_PATH,
-                        help="Path to pairs JSON (will be generated if missing).")
+    parser.add_argument("--dataset", choices=["meld", "vox1"], default="meld",
+                        help="Which benchmark to run.")
+    parser.add_argument("--pairs", default=None,
+                        help="Path to pairs JSON. If missing, generated automatically.")
+    parser.add_argument("--mode", choices=["all", "main6"], default="main6",
+                        help="MELD only: 'main6' = Friends main cast only; 'all' = every speaker.")
     parser.add_argument("--exp", choices=["1", "2", "3", "all"], default="all")
     parser.add_argument("--n-pairs", type=int, default=-1,
-                        help="Limit pairs (-1 = all).")
+                        help="Limit pairs (-1 = all). For Vox1 also controls auto-generated subset size.")
     parser.add_argument("--fastapi-url", default="http://localhost:8006")
     parser.add_argument("--out-dir", default=str(Path(__file__).resolve().parent / "eval_results"))
     args = parser.parse_args()
 
-    if not Path(args.pairs).exists():
-        print(f"Pairs file {args.pairs} not found — generating with defaults.")
-        build_pairs(output_path=args.pairs)
-    pairs = load_pairs(args.pairs)
+    if args.dataset == "vox1":
+        if args.pairs is None:
+            args.pairs = DEFAULT_VOX1_PAIRS_PATH
+        if not Path(args.pairs).exists():
+            n = args.n_pairs if args.n_pairs > 0 else 200
+            print(f"Pairs file {args.pairs} not found — generating Vox1-O subset (n={n}).")
+            build_vox1_pairs(n_pairs=n, output_path=args.pairs)
+        pairs = load_vox1_pairs(args.pairs)
+    else:
+        if args.pairs is None:
+            args.pairs = DEFAULT_OUT_MAIN6 if args.mode == "main6" else DEFAULT_PAIRS_PATH
+        if not Path(args.pairs).exists():
+            print(f"Pairs file {args.pairs} not found — generating MELD (mode={args.mode}).")
+            build_pairs(output_path=args.pairs, mode=args.mode)
+        pairs = load_pairs(args.pairs)
+
     if args.n_pairs > 0:
         pairs = pairs[: args.n_pairs]
-    print(f"Evaluating on {len(pairs)} pairs.")
+    print(f"Evaluating on {len(pairs)} pairs (dataset={args.dataset}).")
 
     if args.exp in ("1", "all"):
         model, processor = _load_qwen_audio()
         scores, labels = run_experiment_direct_audio(pairs, model, processor)
-        path, _ = save_results(args.out_dir, "1", scores, labels, "Qwen/Qwen2-Audio-7B-Instruct")
+        path, _ = save_results(args.out_dir, "1", scores, labels, "Qwen/Qwen2-Audio-7B-Instruct",
+                               extra={"dataset": args.dataset})
         print(format_summary("1", "Qwen/Qwen2-Audio-7B-Instruct", scores, labels, path))
         del model, processor
         torch.cuda.empty_cache() if torch.cuda.is_available() else None
@@ -279,18 +323,20 @@ def main():
         text_pipe = _load_qwen_text()
 
         if args.exp in ("2", "all"):
-            print("\nExperiment 2: ensure DB is EMPTY (no MELD train enrolled).")
+            print(f"\nExperiment 2: ensure DB is EMPTY (no enrollment) for dataset={args.dataset}.")
             scores, labels = run_experiment_rag_text(pairs, text_pipe, args.fastapi_url)
             path, _ = save_results(args.out_dir, "2", scores, labels, "Qwen/Qwen2-7B-Instruct",
-                                   extra={"rag": "no_enrollment"})
+                                   extra={"dataset": args.dataset, "rag": "no_enrollment"})
             print(format_summary("2", "Qwen/Qwen2-7B-Instruct + RAG (empty)", scores, labels, path))
 
         if args.exp in ("3", "all"):
-            print("\nExperiment 3: ensure DB has MELD train enrolled.")
+            train_label = "MELD train" if args.dataset == "meld" else "VoxCeleb1 test speakers (Vox1-O)"
+            print(f"\nExperiment 3: ensure DB has {train_label} enrolled.")
             scores, labels = run_experiment_rag_text(pairs, text_pipe, args.fastapi_url)
             path, _ = save_results(args.out_dir, "3", scores, labels, "Qwen/Qwen2-7B-Instruct",
-                                   extra={"rag": "meld_train_enrolled"})
-            print(format_summary("3", "Qwen/Qwen2-7B-Instruct + RAG (enrolled)", scores, labels, path))
+                                   extra={"dataset": args.dataset, "rag": f"{args.dataset}_enrolled"})
+            print(format_summary("3", f"Qwen/Qwen2-7B-Instruct + RAG ({train_label} enrolled)",
+                                  scores, labels, path))
 
 
 if __name__ == "__main__":

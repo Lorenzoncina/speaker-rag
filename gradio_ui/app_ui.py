@@ -11,6 +11,11 @@ from transformers import pipeline
 # Allow importing from the sibling `tests/` package.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tests.meld_pairs import build_pairs, load_pairs, DEFAULT_OUT as DEFAULT_PAIRS_PATH
+from tests.vox1_pairs import (
+    build_pairs as build_vox1_pairs,
+    load_pairs as load_vox1_pairs,
+    DEFAULT_OUT as DEFAULT_VOX1_PAIRS_PATH,
+)
 from tests.eval_speaker_verification import (
     run_experiment_direct_audio,
     run_experiment_rag_text,
@@ -183,6 +188,27 @@ def ingest_meld_ui():
     except Exception as e:
         return f"An error occurred: {str(e)}"
 
+
+def ingest_voxceleb_ui(per_speaker: int = 10):
+    try:
+        response = requests.get(
+            f"{FASTAPI_URL}/admin/ingest_voxceleb",
+            params={"per_speaker": int(per_speaker)},
+            timeout=3600,
+        )
+        if response.status_code == 200:
+            r = response.json()
+            return (
+                f"VoxCeleb1 Ingestion Complete!\n"
+                f"Speakers: {r.get('n_speakers', 0)}\n"
+                f"Per speaker: {r.get('per_speaker', 0)}\n"
+                f"Total enrolled: {r.get('enrolled_count', 0)} files."
+            )
+        else:
+            return f"Error {response.status_code}:\n{response.text}"
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
+
 # ==========================================
 # Speaker Verification Evaluation (MELD dev)
 # ==========================================
@@ -243,6 +269,69 @@ def run_exp3(n_pairs, regenerate, progress=gr.Progress()):
 
 
 # ==========================================
+# Speaker Verification Evaluation (VoxCeleb1 Vox1-O)
+# ==========================================
+def _ensure_vox1_pairs(regenerate: bool, n_pairs: int):
+    n = int(n_pairs) if int(n_pairs) > 0 else 200
+    if regenerate or not Path(DEFAULT_VOX1_PAIRS_PATH).exists():
+        build_vox1_pairs(n_pairs=n, output_path=DEFAULT_VOX1_PAIRS_PATH)
+    return load_vox1_pairs(DEFAULT_VOX1_PAIRS_PATH)
+
+
+def run_vox1_exp1(n_pairs, regenerate, progress=gr.Progress()):
+    try:
+        pairs = _slice_pairs(_ensure_vox1_pairs(regenerate, n_pairs), n_pairs)
+        progress(0, desc="Loading Qwen2-Audio (first run only)...")
+        model, processor = get_qwen_audio()
+
+        def cb(done, total):
+            progress(done / max(total, 1), desc=f"Vox1 Exp 1: {done}/{total} pairs")
+
+        scores, labels = run_experiment_direct_audio(pairs, model, processor, progress_callback=cb)
+        path, _ = save_results(EVAL_RESULTS_DIR, "1", scores, labels,
+                               "Qwen/Qwen2-Audio-7B-Instruct",
+                               extra={"dataset": "vox1"})
+        return format_summary("1 (Vox1)", "Qwen/Qwen2-Audio-7B-Instruct",
+                              scores, labels, path)
+    except Exception as e:
+        return f"Vox1 Experiment 1 failed: {e}"
+
+
+def _run_vox1_rag_text_exp(experiment_id: str, label: str, rag_tag: str,
+                            n_pairs, regenerate, progress=gr.Progress()):
+    try:
+        pairs = _slice_pairs(_ensure_vox1_pairs(regenerate, n_pairs), n_pairs)
+
+        def cb(done, total):
+            progress(done / max(total, 1),
+                     desc=f"Vox1 Exp {experiment_id}: {done}/{total} pairs")
+
+        scores, labels = run_experiment_rag_text(
+            pairs, llm_pipeline, FASTAPI_URL, progress_callback=cb
+        )
+        path, _ = save_results(EVAL_RESULTS_DIR, experiment_id, scores, labels,
+                               "Qwen/Qwen2-7B-Instruct",
+                               extra={"dataset": "vox1", "rag": rag_tag})
+        return format_summary(f"{experiment_id} (Vox1)", label, scores, labels, path)
+    except Exception as e:
+        return f"Vox1 Experiment {experiment_id} failed: {e}"
+
+
+def run_vox1_exp2(n_pairs, regenerate, progress=gr.Progress()):
+    return _run_vox1_rag_text_exp(
+        "2", "Qwen/Qwen2-7B-Instruct + RAG (empty DB)", "no_enrollment",
+        n_pairs, regenerate, progress,
+    )
+
+
+def run_vox1_exp3(n_pairs, regenerate, progress=gr.Progress()):
+    return _run_vox1_rag_text_exp(
+        "3", "Qwen/Qwen2-7B-Instruct + RAG (VoxCeleb1 enrolled)", "vox1_enrolled",
+        n_pairs, regenerate, progress,
+    )
+
+
+# ==========================================
 # Gradio UI Layout
 # ==========================================
 with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
@@ -263,14 +352,21 @@ with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
                     list_btn = gr.Button("Show Enrolled Users", variant="secondary")
                     clear_btn = gr.Button("Clear Entire Database", variant="stop")
                     meld_btn = gr.Button("🚀 Ingest MELD (Admin)", variant="primary")
-            
+                with gr.Row():
+                    vox1_per_speaker = gr.Number(
+                        label="VoxCeleb1: utterances per speaker",
+                        value=10, precision=0, scale=1,
+                    )
+                    vox1_btn = gr.Button("🎤 Ingest VoxCeleb1 (Admin)", variant="primary", scale=2)
+
             with gr.Column():
                 enroll_output = gr.Textbox(label="Enrollment / Database Status", lines=10)
-        
+
         enroll_btn.click(fn=enroll_rag, inputs=[enroll_audio, enroll_ids], outputs=enroll_output)
         list_btn.click(fn=list_enrolled_users, inputs=[], outputs=enroll_output)
         clear_btn.click(fn=clear_rag, inputs=[], outputs=enroll_output)
         meld_btn.click(fn=ingest_meld_ui, inputs=[], outputs=enroll_output)
+        vox1_btn.click(fn=ingest_voxceleb_ui, inputs=[vox1_per_speaker], outputs=enroll_output)
         
     with gr.Accordion("🎙️ Step 1b: Conversation Enrollment (Diarization)", open=False):
         gr.Markdown(
@@ -405,6 +501,46 @@ with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
         exp1_btn.click(fn=run_exp1, inputs=[eval_n_pairs, eval_regen], outputs=eval_output)
         exp2_btn.click(fn=run_exp2, inputs=[eval_n_pairs, eval_regen], outputs=eval_output)
         exp3_btn.click(fn=run_exp3, inputs=[eval_n_pairs, eval_regen], outputs=eval_output)
+
+    with gr.Accordion("📊 Step 4: Speaker Verification Evaluation (VoxCeleb1 Vox1-O)", open=False):
+        gr.Markdown(
+            "Run the same three EER experiments on the VoxCeleb1 Vox1-O trial list — "
+            "much cleaner audio than MELD and the canonical ASV benchmark used in the "
+            "Speech-Aware LLM paper.\n\n"
+            "**Recommended workflow:**\n"
+            "1. Click **Clear Entire Database** in Step 1.\n"
+            "2. Run **Vox1 Experiment 1** (Qwen2-Audio direct — does not touch the DB).\n"
+            "3. Run **Vox1 Experiment 2** (RAG without enrollment — DB must be empty).\n"
+            "4. Click **🎤 Ingest VoxCeleb1 (Admin)** in Step 1 to enroll the 40 test "
+            "speakers (probe files in Vox1-O are excluded automatically).\n"
+            "5. Run **Vox1 Experiment 3** (RAG with VoxCeleb1 enrolled).\n\n"
+            "Vox1-O has 37,720 pairs total. Default subset is 200 (balanced same/diff). "
+            "Use *Number of pairs* to change the subset size; tick *Regenerate pairs* "
+            "to rebuild the JSON with a new subset."
+        )
+        with gr.Row():
+            vox1_eval_n_pairs = gr.Number(
+                label="Number of pairs (-1 = all 37,720)",
+                value=200, precision=0,
+            )
+            vox1_eval_regen = gr.Checkbox(label="Regenerate pairs", value=False)
+
+        with gr.Row():
+            vox1_exp1_btn = gr.Button("Vox1 Experiment 1: Qwen2-Audio direct", variant="primary")
+            vox1_exp2_btn = gr.Button("Vox1 Experiment 2: RAG (empty DB) + text LLM", variant="primary")
+            vox1_exp3_btn = gr.Button("Vox1 Experiment 3: RAG (VoxCeleb1 enrolled) + text LLM", variant="primary")
+
+        vox1_eval_output = gr.Textbox(label="VoxCeleb1 Evaluation Result", lines=10)
+
+        vox1_exp1_btn.click(fn=run_vox1_exp1,
+                            inputs=[vox1_eval_n_pairs, vox1_eval_regen],
+                            outputs=vox1_eval_output)
+        vox1_exp2_btn.click(fn=run_vox1_exp2,
+                            inputs=[vox1_eval_n_pairs, vox1_eval_regen],
+                            outputs=vox1_eval_output)
+        vox1_exp3_btn.click(fn=run_vox1_exp3,
+                            inputs=[vox1_eval_n_pairs, vox1_eval_regen],
+                            outputs=vox1_eval_output)
 
 
 if __name__ == "__main__":

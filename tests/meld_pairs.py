@@ -1,15 +1,21 @@
 """Build a balanced speaker-verification trial list from the MELD dev split.
 
-Produces a JSON file with 1000 same-speaker + 1000 different-speaker pairs by
-default, sampled deterministically. Multi-speaker labels (e.g. "All",
-"Monica and Rachel") are excluded — they are not valid single-speaker audios.
+Produces a JSON file with same-speaker + different-speaker pairs sampled
+deterministically. Multi-speaker labels (e.g. "All", "Monica and Rachel")
+are excluded — they are not valid single-speaker audios.
+
+Two modes:
+  --mode all     (default) All single speakers with >=2 utterances.
+  --mode main6   Only the 6 main Friends characters. Use this when the
+                 enrollment DB covers MELD train, because minor characters
+                 are typically absent from train and degrade EER measurement.
 """
 import os
 import json
 import random
 import argparse
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -17,6 +23,9 @@ import pandas as pd
 DEFAULT_CSV = "/app/MELD.Raw/dev_sent_emo.csv"
 DEFAULT_AUDIO_DIR = "/app/MELD.Raw/dev_splits_complete"
 DEFAULT_OUT = str(Path(__file__).resolve().parent / "meld_dev_pairs.json")
+DEFAULT_OUT_MAIN6 = str(Path(__file__).resolve().parent / "meld_dev_pairs_main6.json")
+
+MAIN6 = {"monica", "rachel", "phoebe", "joey", "chandler", "ross"}
 
 
 def _is_single_speaker(name: str) -> bool:
@@ -30,13 +39,20 @@ def _is_single_speaker(name: str) -> bool:
     return True
 
 
-def _collect_utterances(csv_path: str, audio_dir: str) -> Dict[str, List[str]]:
+def _collect_utterances(
+    csv_path: str,
+    audio_dir: str,
+    allowed_speakers: Optional[set] = None,
+) -> Dict[str, List[str]]:
     df = pd.read_csv(csv_path)
     by_speaker: Dict[str, List[str]] = {}
     missing = 0
     for _, row in df.iterrows():
         speaker = str(row.get("Speaker", "")).strip()
         if not _is_single_speaker(speaker):
+            continue
+        speaker_lc = speaker.lower()
+        if allowed_speakers is not None and speaker_lc not in allowed_speakers:
             continue
         try:
             dialogue_id = int(row["Dialogue_ID"])
@@ -47,9 +63,11 @@ def _collect_utterances(csv_path: str, audio_dir: str) -> Dict[str, List[str]]:
         if not os.path.exists(path):
             missing += 1
             continue
-        by_speaker.setdefault(speaker.lower(), []).append(path)
+        by_speaker.setdefault(speaker_lc, []).append(path)
+    label = f"(restricted to {sorted(allowed_speakers)})" if allowed_speakers else ""
     print(f"Collected {sum(len(v) for v in by_speaker.values())} utterances "
-          f"across {len(by_speaker)} speakers ({missing} missing audio files skipped).")
+          f"across {len(by_speaker)} speakers {label} "
+          f"({missing} missing audio files skipped).")
     return by_speaker
 
 
@@ -60,8 +78,10 @@ def build_pairs(
     n_diff: int = 1000,
     seed: int = 42,
     output_path: str = DEFAULT_OUT,
+    mode: str = "all",
 ) -> Tuple[List[dict], dict]:
-    by_speaker = _collect_utterances(csv_path, audio_dir)
+    allowed = MAIN6 if mode == "main6" else None
+    by_speaker = _collect_utterances(csv_path, audio_dir, allowed_speakers=allowed)
     eligible = sorted([s for s, paths in by_speaker.items() if len(paths) >= 2])
     if len(eligible) < 2:
         raise RuntimeError(
@@ -104,6 +124,7 @@ def build_pairs(
     meta = {
         "csv_path": csv_path,
         "audio_dir": audio_dir,
+        "mode": mode,
         "n_same_requested": n_same,
         "n_diff_requested": n_diff,
         "n_same_actual": len(same_pairs),
@@ -117,7 +138,7 @@ def build_pairs(
     with open(output_path, "w") as f:
         json.dump({"meta": meta, "pairs": pairs}, f, indent=2)
     print(f"Wrote {len(pairs)} pairs to {output_path} "
-          f"({len(same_pairs)} same, {len(diff_pairs)} different).")
+          f"({len(same_pairs)} same, {len(diff_pairs)} different, mode={mode}).")
     return pairs, meta
 
 
@@ -133,6 +154,11 @@ if __name__ == "__main__":
     parser.add_argument("--n-same", type=int, default=1000)
     parser.add_argument("--n-diff", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--out", default=DEFAULT_OUT)
+    parser.add_argument("--mode", choices=["all", "main6"], default="all",
+                        help="'all' = every single speaker; 'main6' = Friends main cast only")
+    parser.add_argument("--out", default=None,
+                        help="Output path (defaults to meld_dev_pairs.json or meld_dev_pairs_main6.json)")
     args = parser.parse_args()
-    build_pairs(args.csv, args.audio_dir, args.n_same, args.n_diff, args.seed, args.out)
+
+    out = args.out or (DEFAULT_OUT_MAIN6 if args.mode == "main6" else DEFAULT_OUT)
+    build_pairs(args.csv, args.audio_dir, args.n_same, args.n_diff, args.seed, out, args.mode)
