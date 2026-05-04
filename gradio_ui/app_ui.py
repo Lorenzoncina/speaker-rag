@@ -288,10 +288,24 @@ def run_exp3(n_pairs, regenerate, progress=gr.Progress()):
 # Speaker Verification Evaluation (VoxCeleb1 Vox1-O)
 # ==========================================
 def _ensure_vox1_pairs(regenerate: bool, n_pairs: int):
-    n = int(n_pairs) if int(n_pairs) > 0 else 200
+    n = int(n_pairs)
     if regenerate or not Path(DEFAULT_VOX1_PAIRS_PATH).exists():
         build_vox1_pairs(n_pairs=n, output_path=DEFAULT_VOX1_PAIRS_PATH)
     return load_vox1_pairs(DEFAULT_VOX1_PAIRS_PATH)
+
+
+def build_vox1_pairs_ui(n_pairs):
+    pairs = _ensure_vox1_pairs(regenerate=True, n_pairs=n_pairs)
+    n = int(n_pairs)
+    n_same = sum(1 for p in pairs if p["label"] == 1)
+    n_diff = sum(1 for p in pairs if p["label"] == 0)
+    probe_count = len({p["audio1_rel"] for p in pairs} | {p["audio2_rel"] for p in pairs})
+    label = "all" if n <= 0 else str(n)
+    return (
+        f"Built pairs file: {label} pairs ({n_same} same, {n_diff} diff)\n"
+        f"Probe files to exclude from enrollment: {probe_count}\n"
+        f"Saved to: {DEFAULT_VOX1_PAIRS_PATH}"
+    )
 
 
 def run_vox1_exp1(n_pairs, regenerate, progress=gr.Progress()):
@@ -531,15 +545,15 @@ with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
             "speakers (probe files in Vox1-O are excluded automatically).\n"
             "5. Run **Vox1 Experiment 3** (RAG with VoxCeleb1 enrolled).\n\n"
             "Vox1-O has 37,720 pairs total. Default subset is 200 (balanced same/diff). "
-            "Use *Number of pairs* to change the subset size; tick *Regenerate pairs* "
-            "to rebuild the JSON with a new subset."
+            "Set *Number of pairs* (-1 = all 37,720) and click **Build / Rebuild pairs file** "
+            "first — this must be done before Ingesting VoxCeleb1 so probe files are correctly excluded."
         )
         with gr.Row():
             vox1_eval_n_pairs = gr.Number(
                 label="Number of pairs (-1 = all 37,720)",
                 value=200, precision=0,
             )
-            vox1_eval_regen = gr.Checkbox(label="Regenerate pairs", value=False)
+            vox1_build_btn = gr.Button("Build / Rebuild pairs file", variant="secondary")
 
         with gr.Row():
             vox1_exp1_btn = gr.Button("Vox1 Experiment 1: Qwen2-Audio direct", variant="primary")
@@ -548,14 +562,17 @@ with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
 
         vox1_eval_output = gr.Textbox(label="VoxCeleb1 Evaluation Result", lines=10)
 
+        vox1_build_btn.click(fn=build_vox1_pairs_ui,
+                             inputs=[vox1_eval_n_pairs],
+                             outputs=vox1_eval_output)
         vox1_exp1_btn.click(fn=run_vox1_exp1,
-                            inputs=[vox1_eval_n_pairs, vox1_eval_regen],
+                            inputs=[vox1_eval_n_pairs, gr.State(False)],
                             outputs=vox1_eval_output)
         vox1_exp2_btn.click(fn=run_vox1_exp2,
-                            inputs=[vox1_eval_n_pairs, vox1_eval_regen],
+                            inputs=[vox1_eval_n_pairs, gr.State(False)],
                             outputs=vox1_eval_output)
         vox1_exp3_btn.click(fn=run_vox1_exp3,
-                            inputs=[vox1_eval_n_pairs, vox1_eval_regen],
+                            inputs=[vox1_eval_n_pairs, gr.State(False)],
                             outputs=vox1_eval_output)
 
 
