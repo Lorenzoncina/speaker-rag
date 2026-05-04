@@ -1,11 +1,12 @@
 """Speaker verification evaluation on MELD dev pairs.
 
-Three experimental conditions, all scored via LLR(Yes/No) → EER:
+Three experimental conditions:
 
-  1. Direct Qwen2-Audio-7B-Instruct: both audios fed to the audio LLM.
+  1. Direct Qwen2-Audio-7B-Instruct: both audios fed to the audio LLM, which
+     generates a free-form response and a 0-100 confidence score → EER.
   2. RAG-without-enrollment + text LLM: each audio is sent through the RAG
      /rag/retrieve endpoint (DB must be empty); the two FactSheets are
-     concatenated and shown to a text-only LLM that emits Yes/No.
+     concatenated and shown to a text-only LLM that emits Yes/No → LLR → EER.
   3. RAG-with-MELD-train + text LLM: same as (2) but with MELD train enrolled.
 
 This module is importable (the Gradio UI calls these functions) and also
@@ -14,6 +15,7 @@ runnable as a CLI for full benchmark runs.
 from __future__ import annotations
 
 import os
+import re
 import json
 import time
 import argparse
@@ -35,12 +37,15 @@ from .vox1_pairs import (DEFAULT_OUT as DEFAULT_VOX1_PAIRS_PATH,
 # ---------------------------------------------------------------------------
 # Prompts
 
-QWEN_AUDIO_PROMPT = (
+QWEN_AUDIO_CONFIDENCE_PROMPT = (
     "These are two distinct audios. First, think about the elements that "
     "characterize each speaker, such as their gender, accent, tone, prosody, "
     "and speech rate. Give the characteristics for each audio. Then, from "
     "those characteristics, infer the likelihood that both speakers are the "
-    "same. Answer by Yes or No."
+    "same. Answer by Yes or No, and give a confidence score between 0 and 100: "
+    "0 corresponds to the certainty that they are from different speakers, "
+    "100 corresponds to the certainty that they are from the same speaker, "
+    "and 50 means you are uncertain."
 )
 
 TEXT_VERIFICATION_TEMPLATE = (
@@ -91,30 +96,61 @@ def _yes_no_ids(tokenizer) -> Tuple[int, int]:
 
 
 # ---------------------------------------------------------------------------
-# Experiment 1: direct Qwen2-Audio scoring
+# Experiment 1: direct Qwen2-Audio scoring (confidence-score protocol)
 
-def _llr_qwen_audio(audio_model, processor, audio1: str, audio2: str) -> float:
+def _parse_confidence(text: str) -> Optional[float]:
+    """Extract the 0-100 confidence integer from model-generated text.
+
+    Search order:
+      1. First integer in [0,100] that follows a Yes/No token.
+      2. First integer in [0,100] after a 'confidence'/'score'/'certainty' keyword.
+      3. Last standalone integer in [0,100] anywhere in the response.
+    Returns None when no valid integer is found (parse failure).
+    """
+    m = re.search(r'\b(?:yes|no)\b[^0-9]*?(\d{1,3})', text, re.IGNORECASE | re.DOTALL)
+    if m:
+        val = int(m.group(1))
+        if 0 <= val <= 100:
+            return float(val)
+
+    m = re.search(r'(?:confidence|score|certainty)[^\d]*?(\d{1,3})', text, re.IGNORECASE)
+    if m:
+        val = int(m.group(1))
+        if 0 <= val <= 100:
+            return float(val)
+
+    for tok in reversed(re.findall(r'\b(\d{1,3})\b', text)):
+        val = int(tok)
+        if 0 <= val <= 100:
+            return float(val)
+
+    return None
+
+
+def _confidence_qwen_audio(
+    audio_model, processor, audio1: str, audio2: str
+) -> Tuple[Optional[float], str]:
+    """Generate a free-form response and parse a 0-100 confidence score from it."""
     import librosa
 
     conversation = [
         {"role": "user", "content": [
             {"type": "audio", "audio_url": audio1},
             {"type": "audio", "audio_url": audio2},
-            {"type": "text", "text": QWEN_AUDIO_PROMPT},
+            {"type": "text", "text": QWEN_AUDIO_CONFIDENCE_PROMPT},
         ]}
     ]
     text = processor.apply_chat_template(conversation, add_generation_prompt=True, tokenize=False)
     sr = processor.feature_extractor.sampling_rate
     audios = [librosa.load(p, sr=sr)[0] for p in (audio1, audio2)]
-    inputs = processor(text=text, audios=audios, return_tensors="pt", padding=True)
+    inputs = processor(text=text, audio=audios, sampling_rate=sr, return_tensors="pt", padding=True)
     inputs = {k: v.to(audio_model.device) for k, v in inputs.items()}
 
+    input_len = inputs["input_ids"].shape[1]
     with torch.no_grad():
-        outputs = audio_model(**inputs)
-    logits = outputs.logits[0, -1, :]
-    log_probs = torch.log_softmax(logits.float(), dim=-1)
-    yes_id, no_id = _yes_no_ids(processor.tokenizer)
-    return float(log_probs[yes_id] - log_probs[no_id])
+        output_ids = audio_model.generate(**inputs, max_new_tokens=256, do_sample=False)
+    response = processor.tokenizer.decode(output_ids[0, input_len:], skip_special_tokens=True)
+    return _parse_confidence(response), response
 
 
 def run_experiment_direct_audio(
@@ -124,15 +160,23 @@ def run_experiment_direct_audio(
     progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     scores, labels = [], []
+    failures = 0
     for i, p in enumerate(pairs):
         try:
-            llr = _llr_qwen_audio(audio_model, processor, p["audio1"], p["audio2"])
-            scores.append(llr)
-            labels.append(p["label"])
+            score, response = _confidence_qwen_audio(audio_model, processor, p["audio1"], p["audio2"])
+            if score is None:
+                print(f"[exp1] pair {i}: parse failure — {response[:120]!r}")
+                failures += 1
+            else:
+                scores.append(score)
+                labels.append(p["label"])
         except Exception as e:
-            print(f"[exp1] pair {i} failed: {e}")
+            print(f"[exp1] pair {i} exception: {e}")
+            failures += 1
         if progress_callback:
             progress_callback(i + 1, len(pairs))
+    total = len(pairs)
+    print(f"[exp1] failures: {failures}/{total} ({100 * failures / total:.1f}%)")
     return np.array(scores), np.array(labels)
 
 
