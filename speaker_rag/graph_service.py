@@ -193,27 +193,34 @@ class GraphService:
     ) -> Dict[str, Any]:
         """Walk the graph from entities found in the question.
 
+        Two traversal modes:
+          1. Entity-centric (default): extract entities from the question, match them
+             in the graph, walk back to utterances and speakers.
+          2. Speaker-centric fallback: when speaker_ids are known but the question
+             contains no entity names (e.g. "Does Jan mention any city?"), traverse
+             directly from the speaker node to all entities it mentions.
+
         Returns:
-          matched_entities  — entities found in both question and graph
+          matched_entities  — entities found in the graph (from question NER or speaker traversal)
           related_speakers  — speakers connected to those entities
-          utterances        — top matching utterances (by entity overlap count)
+          utterances        — top matching utterances
           co_speakers       — KNOWS pairs among related speakers
+          fallback_mode     — True when speaker-centric fallback was used
         """
         out: Dict[str, Any] = {
             "matched_entities": [],
             "related_speakers": [],
             "utterances": [],
             "co_speakers": [],
+            "fallback_mode": False,
         }
 
-        if not question.strip() or self._g.number_of_nodes() == 0:
+        if self._g.number_of_nodes() == 0:
             return out
 
-        q_entities = extract_entities(question)
-        if not q_entities:
-            return out
+        # --- 1. Entity-centric traversal ---
+        q_entities = extract_entities(question) if question.strip() else []
 
-        # Match entity nodes in graph (exact key first, then partial surface match)
         matched_ent_ids: List[str] = []
         for ent_text, ent_label in q_entities:
             exact = f"ent::{ent_label}::{ent_text.lower()}"
@@ -221,7 +228,6 @@ class GraphService:
                 matched_ent_ids.append(exact)
                 out["matched_entities"].append({"text": ent_text, "label": ent_label})
             else:
-                # partial match against stored surface text (label-agnostic)
                 q_lower = ent_text.lower()
                 for nid, ndata in self._g.nodes(data=True):
                     if ndata.get("type") == "entity":
@@ -231,73 +237,102 @@ class GraphService:
                             out["matched_entities"].append(
                                 {"text": ndata["surface"], "label": ndata.get("label", "")}
                             )
-                            break  # one match per query entity is enough
+                            break
 
-        if not matched_ent_ids:
-            return out
+        if matched_ent_ids:
+            # Entity → utterances, scored by number of matched entities
+            utt_scores: Dict[str, int] = {}
+            for eid in set(matched_ent_ids):
+                for uid in self._g.predecessors(eid):
+                    if self._g.nodes.get(uid, {}).get("type") == "utterance":
+                        utt_scores[uid] = utt_scores.get(uid, 0) + 1
 
-        # Entity → predecessor utterances, scored by number of matched entities
-        utt_scores: Dict[str, int] = {}
-        for eid in set(matched_ent_ids):
-            for uid in self._g.predecessors(eid):
-                if self._g.nodes.get(uid, {}).get("type") == "utterance":
-                    utt_scores[uid] = utt_scores.get(uid, 0) + 1
+            if speaker_ids:
+                spk_set = set(speaker_ids)
+                utt_scores = {
+                    uid: score
+                    for uid, score in utt_scores.items()
+                    if any(
+                        self._g.nodes.get(p, {}).get("type") == "speaker" and p in spk_set
+                        for p in self._g.predecessors(uid)
+                    )
+                }
 
-        # Optionally restrict to utterances from specific speakers
-        if speaker_ids:
-            spk_set = set(speaker_ids)
-            utt_scores = {
-                uid: score
-                for uid, score in utt_scores.items()
-                if any(
-                    self._g.nodes.get(p, {}).get("type") == "speaker" and p in spk_set
-                    for p in self._g.predecessors(uid)
+            top = sorted(utt_scores, key=lambda x: utt_scores[x], reverse=True)[:max_utterances]
+            seen_speakers: set = set()
+            for uid in top:
+                ua = self._g.nodes[uid]
+                spk = next(
+                    (p for p in self._g.predecessors(uid)
+                     if self._g.nodes.get(p, {}).get("type") == "speaker"),
+                    "Unknown",
                 )
-            }
-
-        top = sorted(utt_scores, key=lambda x: utt_scores[x], reverse=True)[:max_utterances]
-
-        seen_speakers: set = set()
-        for uid in top:
-            ua = self._g.nodes[uid]
-            spk = next(
-                (
-                    p
-                    for p in self._g.predecessors(uid)
-                    if self._g.nodes.get(p, {}).get("type") == "speaker"
-                ),
-                "Unknown",
-            )
-            seen_speakers.add(spk)
-            out["utterances"].append(
-                {
+                seen_speakers.add(spk)
+                out["utterances"].append({
                     "chroma_id": uid,
                     "text": ua.get("text", ""),
                     "speaker": spk,
                     "acoustic_emotion": ua.get("acoustic_emotion", ""),
                     "text_emotion": ua.get("text_emotion", ""),
-                }
-            )
+                })
 
-        out["related_speakers"] = list(seen_speakers)
+            out["related_speakers"] = list(seen_speakers)
+            self._append_knows(out, seen_speakers)
+            return out
 
-        # KNOWS edges among the speakers we just found
+        # --- 2. Speaker-centric fallback ---
+        # No entity found in question, but we know which speakers to look at.
+        # Traverse: speaker → utterances → entities.
+        if not speaker_ids:
+            return out
+
+        out["fallback_mode"] = True
+        spk_set = set(speaker_ids)
+        seen_ents: set = set()
+        seen_speakers_fb: set = set()
+
+        for spk in spk_set:
+            if not self._g.has_node(spk) or self._g.nodes[spk].get("type") != "speaker":
+                continue
+            for uid in self._g.successors(spk):
+                if self._g.nodes.get(uid, {}).get("type") != "utterance":
+                    continue
+                ua = self._g.nodes[uid]
+                seen_speakers_fb.add(spk)
+                if len(out["utterances"]) < max_utterances:
+                    out["utterances"].append({
+                        "chroma_id": uid,
+                        "text": ua.get("text", ""),
+                        "speaker": spk,
+                        "acoustic_emotion": ua.get("acoustic_emotion", ""),
+                        "text_emotion": ua.get("text_emotion", ""),
+                    })
+                for ent_id in self._g.successors(uid):
+                    if (self._g.nodes.get(ent_id, {}).get("type") == "entity"
+                            and ent_id not in seen_ents):
+                        seen_ents.add(ent_id)
+                        nd = self._g.nodes[ent_id]
+                        out["matched_entities"].append({
+                            "text": nd.get("surface", ""),
+                            "label": nd.get("label", ""),
+                        })
+
+        out["related_speakers"] = list(seen_speakers_fb)
+        self._append_knows(out, seen_speakers_fb)
+        return out
+
+    def _append_knows(self, out: Dict[str, Any], seen_speakers: set) -> None:
+        """Populate co_speakers from KNOWS edges among a set of speaker nodes."""
         for spk in seen_speakers:
             for nbr in self._g.successors(spk):
                 edge = self._g[spk].get(nbr, {})
-                if (
-                    self._g.nodes.get(nbr, {}).get("type") == "speaker"
-                    and edge.get("relation") == "KNOWS"
-                ):
-                    out["co_speakers"].append(
-                        {
-                            "speaker_a": spk,
-                            "speaker_b": nbr,
-                            "n_dialogues": edge.get("n_dialogues", 0),
-                        }
-                    )
-
-        return out
+                if (self._g.nodes.get(nbr, {}).get("type") == "speaker"
+                        and edge.get("relation") == "KNOWS"):
+                    out["co_speakers"].append({
+                        "speaker_a": spk,
+                        "speaker_b": nbr,
+                        "n_dialogues": edge.get("n_dialogues", 0),
+                    })
 
     # ------------------------------------------------------------------
     # Persistence

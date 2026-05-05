@@ -515,7 +515,10 @@ class SpeakerRAG:
             return fact_sheet + "\n".join(lines)
 
         ent_str = ", ".join(f"{e['text']} ({e['label']})" for e in kg["matched_entities"])
-        lines.append(f"Entities in question: {ent_str}")
+        if kg.get("fallback_mode"):
+            lines.append(f"Entities mentioned by speaker(s) (graph traversal): {ent_str}")
+        else:
+            lines.append(f"Entities in question: {ent_str}")
 
         if kg["related_speakers"]:
             lines.append(
