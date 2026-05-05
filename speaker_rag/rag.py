@@ -1,12 +1,13 @@
 import os
 import re
 import uuid
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 
 from .model_loader import load_audio_models
 from .identification_service import Identification_Service
 from .semantic_service import Semantic_Service
 from .diarization_service import Diarization_Service, parse_vtt
+from .graph_service import GraphService
 
 class SpeakerRAG:
     def __init__(self,
@@ -38,6 +39,11 @@ class SpeakerRAG:
         self._hf_auth_token = hf_auth_token
         self._diarization_service = None  # Lazy-loaded on first use
 
+        graph_path = os.path.join(
+            os.path.dirname(os.path.normpath(chroma_dir)), "knowledge_graph.json"
+        )
+        self.graph_service = GraphService(graph_path=graph_path)
+
         self.device = device
         print("SpeakerRAG initialization complete. Ready to build context.")
 
@@ -52,11 +58,12 @@ class SpeakerRAG:
         return self._diarization_service
     
     def clear_database(self) -> dict:
-        """Clears all stored speakers and semantics from the vector databases."""
+        """Clears all stored speakers, semantics, and the knowledge graph."""
         succ_audio = self.audio_service.clear_collection()
         succ_sem = self.semantic_service.clear_collection()
+        self.graph_service.clear()
         if succ_audio and succ_sem:
-            return {"status": "success", "message": "Vector databases cleared successfully."}
+            return {"status": "success", "message": "Vector databases and knowledge graph cleared successfully."}
         else:
             return {"status": "error", "message": "Failed to clear databases."}
 
@@ -86,7 +93,7 @@ class SpeakerRAG:
         for uid, res_list in extraction_results.items():
             results["enrolled_users"][uid] = []
             sem_ids, sem_transcripts, sem_metas = [], [], []
-            
+
             for res in res_list:
                 chroma_id = res["id"]
                 results["enrolled_users"][uid].append(chroma_id)
@@ -97,10 +104,14 @@ class SpeakerRAG:
                     meta = {"user_id": uid, "audio_file": res["filepath"], "data_type": "enroll", "session_id": session_id}
                     meta.update(res["attributes"])
                     sem_metas.append(meta)
-            
+                    self.graph_service.index_utterance(
+                        speaker_id=uid, chroma_id=chroma_id, text=transcription, metadata=meta
+                    )
+
             if sem_ids:
                 self.semantic_service.index_transcriptions(sem_ids, sem_transcripts, sem_metas)
-            
+
+        self.graph_service.persist()
         return results
 
     def index_conversation(
@@ -201,12 +212,16 @@ class SpeakerRAG:
                     if vtt_transcript:
                         meta["transcription"] = vtt_transcript
                     sem_metas.append(meta)
+                    self.graph_service.index_utterance(
+                        speaker_id=uid, chroma_id=chroma_id, text=transcription, metadata=meta
+                    )
 
                 enrolled_count += 1
 
             if sem_ids:
                 self.semantic_service.index_transcriptions(sem_ids, sem_transcripts, sem_metas)
 
+        self.graph_service.persist()
         print(f"[Conversation] Enrolled {enrolled_count} segments from dialogue {dialogue_id}.")
 
         return {
@@ -302,6 +317,11 @@ class SpeakerRAG:
             question=question,
             target_user_ids=target_user_ids if target_user_ids else None,
             session_id=None,
+        )
+        fact_sheet = self._append_graph_section(
+            fact_sheet=fact_sheet,
+            question=question,
+            speaker_ids=target_user_ids if target_user_ids else None,
         )
 
         recommended_prompt = self._build_prompt(
@@ -409,6 +429,11 @@ class SpeakerRAG:
             target_user_ids=list(identified_users) if identified_users else None,
             session_id=session_id,
         )
+        fact_sheet = self._append_graph_section(
+            fact_sheet=fact_sheet,
+            question=question,
+            speaker_ids=list(identified_users) if identified_users else None,
+        )
 
         # Cleanup
         self.audio_service.delete_session(session_id)
@@ -473,6 +498,52 @@ class SpeakerRAG:
 
         context_lines.append("")
         return "\n".join(context_lines)
+
+    def _append_graph_section(
+        self,
+        fact_sheet: str,
+        question: str,
+        speaker_ids: Optional[List[str]] = None,
+    ) -> str:
+        """Queries the knowledge graph and appends a KG context section to the fact sheet."""
+        lines = ["\n=== FACT SHEET: KNOWLEDGE GRAPH CONTEXT ==="]
+        kg = self.graph_service.query(question, speaker_ids=speaker_ids)
+
+        if not kg["matched_entities"]:
+            lines.append("No named entities detected in the question for graph traversal.")
+            lines.append("")
+            return fact_sheet + "\n".join(lines)
+
+        ent_str = ", ".join(f"{e['text']} ({e['label']})" for e in kg["matched_entities"])
+        lines.append(f"Entities in question: {ent_str}")
+
+        if kg["related_speakers"]:
+            lines.append(
+                "Related speakers via graph: "
+                + ", ".join(s.capitalize() for s in kg["related_speakers"])
+            )
+
+        if kg["co_speakers"]:
+            for cs in kg["co_speakers"]:
+                lines.append(
+                    f"Co-speakers: {cs['speaker_a'].capitalize()} ↔ "
+                    f"{cs['speaker_b'].capitalize()} "
+                    f"({cs['n_dialogues']} shared dialogue(s))"
+                )
+
+        if kg["utterances"]:
+            lines.append("\nGraph-retrieved utterances:")
+            for utt in kg["utterances"]:
+                lines.append(
+                    f"  {utt['speaker'].capitalize()} "
+                    f"(Vocal: {utt['acoustic_emotion']} | Semantic: {utt['text_emotion']}): "
+                    f"\"{utt['text']}\""
+                )
+        else:
+            lines.append("No relevant utterances found via graph traversal.")
+
+        lines.append("")
+        return fact_sheet + "\n".join(lines)
 
     def _build_prompt(
         self,

@@ -270,6 +270,22 @@ async def probe_similarity(audio: UploadFile = File(...), top_k: int = 20):
             os.remove(tmp_path)
 
 
+@app.get("/rag/graph_viz", tags=["RAG"])
+async def get_graph_viz(max_entities: int = 40):
+    """Return a simplified speaker-entity bipartite graph for visualization.
+
+    Utterance nodes are omitted. Entity nodes are limited to the top max_entities
+    by total mention count. Useful for rendering in the Gradio UI.
+    """
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+    try:
+        data = rag_system.graph_service.get_viz_data(max_entities=max_entities)
+        return data
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.get("/admin/ingest_meld", tags=["Admin"])
 def admin_ingest_meld():
     """Temporary backdoor endpoint to ingest MELD using pre-loaded GPU models."""

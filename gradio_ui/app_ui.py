@@ -6,6 +6,8 @@ import gradio as gr
 import requests
 import torch
 import numpy as np
+import base64
+from pyvis.network import Network
 from transformers import pipeline
 
 # Allow importing from the sibling `tests/` package.
@@ -226,6 +228,170 @@ def ingest_voxceleb_ui(per_speaker: int = 10):
         return f"An error occurred: {str(e)}"
 
 # ==========================================
+# Knowledge Graph Visualization
+# ==========================================
+_ENTITY_COLORS = {
+    "PERSON":      "#2ecc71",
+    "ORG":         "#e67e22",
+    "GPE":         "#e74c3c",
+    "PRODUCT":     "#9b59b6",
+    "EVENT":       "#1abc9c",
+    "WORK_OF_ART": "#f39c12",
+    "FAC":         "#d35400",
+    "UNKNOWN":     "#95a5a6",
+}
+
+_EMPTY_GRAPH_HTML = """
+<div style="display:flex;align-items:center;justify-content:center;height:620px;
+            background:#f8fafc;border-radius:8px;border:1px dashed #cbd5e1;">
+  <div style="text-align:center;color:#64748b;">
+    <div style="font-size:48px;margin-bottom:12px;">🕸️</div>
+    <div style="font-size:16px;font-weight:600;">Knowledge graph is empty</div>
+    <div style="font-size:13px;margin-top:6px;">Enroll some audio files first, then click Refresh.</div>
+  </div>
+</div>
+"""
+
+def get_graph_viz(max_entities: int = 40):
+    """Fetch graph data from the backend and render an interactive pyvis/vis.js graph."""
+    try:
+        response = requests.get(
+            f"{FASTAPI_URL}/rag/graph_viz",
+            params={"max_entities": int(max_entities)},
+            timeout=30,
+        )
+        if response.status_code != 200:
+            return f"<p style='color:red'>Error {response.status_code}: {response.text}</p>", ""
+
+        data     = response.json()
+        stats    = data.get("stats", {})
+        nodes    = data.get("nodes", [])
+        edges    = data.get("edges", [])
+
+        stats_str = (
+            f"Nodes: {stats.get('nodes', 0)}  |  "
+            f"Edges: {stats.get('edges', 0)}  |  "
+            f"Speakers: {stats.get('speaker', 0)}  |  "
+            f"Entities: {stats.get('entity', 0)}  |  "
+            f"Utterances (hidden): {stats.get('utterance', 0)}"
+        )
+
+        if not nodes:
+            return _EMPTY_GRAPH_HTML, stats_str
+
+        # Build pyvis network
+        net = Network(
+            height="640px",
+            width="100%",
+            bgcolor="#f8fafc",
+            font_color="#1e293b",
+            cdn_resources="in_line",
+        )
+
+        for n in nodes:
+            nid = n["id"]
+            if n["type"] == "speaker":
+                utt_cnt = n.get("utterance_count", 0)
+                net.add_node(
+                    nid,
+                    label=nid.capitalize(),
+                    shape="box",
+                    color={"background": "#2563eb", "border": "#1d4ed8",
+                           "highlight": {"background": "#60a5fa", "border": "#2563eb"}},
+                    font={"color": "#ffffff", "size": 14, "bold": True},
+                    size=28,
+                    title=(
+                        f"<b>Speaker: {nid.capitalize()}</b><br>"
+                        f"Utterances enrolled: {utt_cnt}"
+                    ),
+                    borderWidth=2,
+                )
+            else:
+                ent_label   = n.get("label", "UNKNOWN")
+                surface     = n.get("surface", nid)
+                total_ment  = n.get("total_mentions", 1)
+                color       = _ENTITY_COLORS.get(ent_label, "#95a5a6")
+                node_size   = min(10 + total_ment * 3, 30)
+                net.add_node(
+                    nid,
+                    label=surface[:24],
+                    shape="dot",
+                    color={"background": color, "border": color,
+                           "highlight": {"background": color, "border": "#1e293b"}},
+                    size=node_size,
+                    title=(
+                        f"<b>{surface}</b><br>"
+                        f"Type: {ent_label}<br>"
+                        f"Total mentions: {total_ment}"
+                    ),
+                    font={"size": 11},
+                )
+
+        for e in edges:
+            if e["relation"] == "KNOWS":
+                n_dial = e.get("n_dialogues", 0)
+                net.add_edge(
+                    e["source"], e["target"],
+                    label=f"KNOWS ({n_dial})",
+                    color={"color": "#1e3a5f", "highlight": "#2563eb"},
+                    font={"size": 10, "color": "#1e3a5f", "strokeWidth": 2, "strokeColor": "#ffffff"},
+                    width=2 + min(n_dial, 5),
+                    title=f"KNOWS — {n_dial} shared dialogue(s)",
+                    dashes=False,
+                )
+            else:
+                cnt = e.get("count", 1)
+                net.add_edge(
+                    e["source"], e["target"],
+                    label=f"MENTIONS ({cnt}×)",
+                    color={"color": "#94a3b8", "highlight": "#64748b"},
+                    font={"size": 9, "color": "#64748b", "strokeWidth": 2, "strokeColor": "#ffffff"},
+                    width=max(0.5, min(cnt * 0.6, 3.0)),
+                    title=f"MENTIONS — {cnt}×",
+                    dashes=True,
+                )
+
+        net.set_options("""{
+          "physics": {
+            "solver": "forceAtlas2Based",
+            "forceAtlas2Based": {
+              "gravitationalConstant": -60,
+              "springLength": 180,
+              "springConstant": 0.08,
+              "damping": 0.4
+            },
+            "stabilization": {"iterations": 200}
+          },
+          "interaction": {
+            "hover": true,
+            "tooltipDelay": 100,
+            "zoomView": true,
+            "dragView": true,
+            "dragNodes": true,
+            "navigationButtons": true,
+            "keyboard": true
+          },
+          "edges": {
+            "smooth": {"type": "continuous"},
+            "arrows": {"to": {"enabled": false}},
+            "font": {"align": "middle"}
+          }
+        }""")
+
+        html_str = net.generate_html()
+        b64      = base64.b64encode(html_str.encode()).decode()
+        iframe   = (
+            f'<iframe src="data:text/html;base64,{b64}" '
+            f'width="100%" height="650px" '
+            f'style="border:none;border-radius:8px;"></iframe>'
+        )
+        return iframe, stats_str
+
+    except Exception as e:
+        return f"<p style='color:red'>Failed to render graph: {e}</p>", ""
+
+
+# ==========================================
 # Speaker Verification Evaluation (MELD dev)
 # ==========================================
 def _ensure_pairs(regenerate: bool):
@@ -397,6 +563,29 @@ with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
         clear_btn.click(fn=clear_rag, inputs=[], outputs=enroll_output)
         meld_btn.click(fn=ingest_meld_ui, inputs=[], outputs=enroll_output)
         vox1_btn.click(fn=ingest_voxceleb_ui, inputs=[vox1_per_speaker], outputs=enroll_output)
+
+        with gr.Accordion("🕸️ Knowledge Graph Visualization", open=False):
+            gr.Markdown(
+                "Interactive graph of the speaker-entity relationships built during enrollment. "
+                "**Speaker nodes** (blue boxes) connect to **entity nodes** (coloured dots) via dashed "
+                "MENTIONS edges. Thick solid edges between speakers = KNOWS (shared dialogue). "
+                "Utterance nodes are hidden — too many to display. "
+                "**Tip:** scroll to zoom · drag nodes · hover for details · use nav buttons bottom-right."
+            )
+            with gr.Row():
+                kg_max_entities = gr.Slider(
+                    label="Max entity nodes shown",
+                    minimum=5, maximum=100, value=40, step=5, scale=3,
+                )
+                kg_refresh_btn = gr.Button("🔄 Refresh Graph", variant="secondary", scale=1)
+            kg_plot  = gr.HTML()
+            kg_stats = gr.Textbox(label="Graph Statistics", interactive=False, lines=1)
+
+            kg_refresh_btn.click(
+                fn=get_graph_viz,
+                inputs=[kg_max_entities],
+                outputs=[kg_plot, kg_stats],
+            )
         
     with gr.Accordion("🎙️ Step 1b: Conversation Enrollment (Diarization)", open=False):
         gr.Markdown(
