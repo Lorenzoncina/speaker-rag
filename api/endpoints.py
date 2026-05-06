@@ -367,7 +367,14 @@ def admin_ingest_meld():
                 metadatas=[metadata],
                 documents=[text]
             )
-            
+
+            rag_system.graph_service.index_utterance(
+                speaker_id=speaker,
+                chroma_id=shared_uuid,
+                text=text,
+                metadata=metadata,
+            )
+
             success_count += 1
             if success_count % 100 == 0:
                 print(f"Ingested {success_count} / 1000 MELD files...")
@@ -375,6 +382,7 @@ def admin_ingest_meld():
         except Exception as e:
             print(f"Failed on Dialogue {row.get('Dialogue_ID')} Utt {row.get('Utterance_ID')}: {e}")
 
+    rag_system.graph_service.persist()
     print("MELD Ingestion Complete!")
     return {"status": "Complete", "enrolled_count": success_count}
 
@@ -522,12 +530,19 @@ def admin_ingest_voxceleb(req: IngestVoxcelebRequest = IngestVoxcelebRequest()):
                 }
                 audio_svc._collection.add(ids=[shared_uuid], embeddings=[spk_emb_vector], metadatas=[metadata])
                 sem_svc._collection.add(ids=[shared_uuid], embeddings=[sem_emb_vector], metadatas=[metadata], documents=[text])
+                rag_system.graph_service.index_utterance(
+                    speaker_id=spk_id,
+                    chroma_id=shared_uuid,
+                    text=text,
+                    metadata=metadata,
+                )
                 success_count += 1
                 if success_count % 50 == 0:
                     print(f"  ...{success_count}/{total_files} enrolled")
             except Exception as e:
                 print(f"Failed on {rel_path}: {e}")
 
+    rag_system.graph_service.persist()
     print("VoxCeleb1 Ingestion Complete!")
     return {
         "status": "Complete",
