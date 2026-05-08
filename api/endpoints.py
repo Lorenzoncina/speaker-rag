@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 
 from speaker_rag.rag import SpeakerRAG
+from speaker_rag.llm_extractor import LLMExtractor
 
 app = FastAPI(
     title="Speaker RAG API", 
@@ -270,6 +271,50 @@ async def probe_similarity(audio: UploadFile = File(...), top_k: int = 20):
             os.remove(tmp_path)
 
 
+class SetLLMKeyRequest(BaseModel):
+    api_key: str
+    model: Optional[str] = None  # defaults to LLMExtractor's default (Haiku 4.5)
+
+
+@app.get("/admin/llm_key", tags=["Admin"])
+async def llm_key_status():
+    """Report whether LLM-backed entity extraction is currently active.
+    The key itself is never returned."""
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+    return rag_system.graph_service.llm_status()
+
+
+@app.post("/admin/llm_key", tags=["Admin"])
+async def set_llm_key(req: SetLLMKeyRequest):
+    """Provide an Anthropic API key at runtime (process-memory only, not persisted).
+    Re-instantiates the LLM extractor and swaps it onto the live GraphService.
+    The submitted key is not echoed back or logged."""
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+
+    key = (req.api_key or "").strip()
+    if not key:
+        return JSONResponse(status_code=400, content={"error": "api_key is required"})
+
+    kwargs = {"api_key": key}
+    if req.model:
+        kwargs["model"] = req.model
+    extractor = LLMExtractor(**kwargs)
+    status = rag_system.graph_service.set_llm_extractor(extractor)
+    if not status["enabled"]:
+        return JSONResponse(status_code=400, content=status)
+    return status
+
+
+@app.delete("/admin/llm_key", tags=["Admin"])
+async def clear_llm_key():
+    """Disable LLM-backed extraction; subsequent ingests fall back to regex/spaCy."""
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+    return rag_system.graph_service.set_llm_extractor(None)
+
+
 @app.get("/rag/graph_viz", tags=["RAG"])
 async def get_graph_viz(max_entities: int = 40):
     """Return a simplified speaker-entity bipartite graph for visualization.
@@ -306,7 +351,7 @@ def admin_ingest_meld():
 
     print("Starting MELD Ingestion Bypass...")
     # Limit to 1000 for testing
-    df = pd.read_csv(csv_path)#.head(1000)
+    df = pd.read_csv(csv_path).head(1000)
 
     # Access the active services directly
     audio_svc = rag_system.audio_service

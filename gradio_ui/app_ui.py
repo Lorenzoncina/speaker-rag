@@ -228,6 +228,58 @@ def ingest_voxceleb_ui(per_speaker: int = 10):
         return f"An error occurred: {str(e)}"
 
 # ==========================================
+# Anthropic API key management (LLM-backed entity extraction)
+# ==========================================
+def _format_llm_status(status: dict) -> str:
+    if not isinstance(status, dict):
+        return "Unknown status."
+    if status.get("enabled"):
+        return f"✅ LLM extraction enabled — model: {status.get('model', 'unknown')}"
+    return f"⚠️ LLM extraction disabled — {status.get('reason', 'unknown reason')}"
+
+
+def get_llm_status_ui() -> str:
+    try:
+        r = requests.get(f"{FASTAPI_URL}/admin/llm_key", timeout=5)
+        if r.status_code != 200:
+            return f"Error {r.status_code}: {r.text}"
+        return _format_llm_status(r.json())
+    except Exception as e:
+        return f"An error occurred: {e}"
+
+
+def set_llm_key_ui(api_key: str):
+    if not api_key or not api_key.strip():
+        return "Please paste an Anthropic API key first.", ""
+    try:
+        r = requests.post(
+            f"{FASTAPI_URL}/admin/llm_key",
+            json={"api_key": api_key.strip()},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            # Clear the textbox so the key isn't left visible after save.
+            return _format_llm_status(r.json()), ""
+        # On 400 the body is the same status dict, so we can render it.
+        try:
+            return _format_llm_status(r.json()), api_key
+        except Exception:
+            return f"Error {r.status_code}: {r.text}", api_key
+    except Exception as e:
+        return f"An error occurred: {e}", api_key
+
+
+def clear_llm_key_ui():
+    try:
+        r = requests.delete(f"{FASTAPI_URL}/admin/llm_key", timeout=5)
+        if r.status_code == 200:
+            return _format_llm_status(r.json()), ""
+        return f"Error {r.status_code}: {r.text}", ""
+    except Exception as e:
+        return f"An error occurred: {e}", ""
+
+
+# ==========================================
 # Knowledge Graph Visualization
 # ==========================================
 _ENTITY_COLORS = {
@@ -534,6 +586,46 @@ with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
     gr.Markdown("# 🗣️ Speaker RAG Engine Demo")
     gr.Markdown("This UI demonstrates a decoupled architecture. The backend extracts audio context and builds a Fact Sheet, which is then passed to a local Text LLM (`Qwen2-1.5B`) running in this UI script.")
     
+    with gr.Accordion("🔑 LLM Settings (Anthropic API key)", open=False):
+        gr.Markdown(
+            "Optional: provide an Anthropic API key to enable **LLM-backed entity "
+            "extraction** during enrollment (Claude Haiku). When set, the knowledge "
+            "graph extracts richer entities than the regex/spaCy fallback. The key is "
+            "kept in the API process memory only — it is **not persisted to disk** and "
+            "is **never returned** by any endpoint."
+        )
+        with gr.Row():
+            llm_key_input = gr.Textbox(
+                label="Anthropic API key",
+                placeholder="sk-ant-...",
+                type="password",
+                scale=4,
+            )
+            llm_set_btn = gr.Button("Save key", variant="primary", scale=1)
+            llm_clear_btn = gr.Button("Clear key", variant="stop", scale=1)
+            llm_refresh_btn = gr.Button("🔄", scale=1)
+        llm_status = gr.Textbox(
+            label="LLM extraction status",
+            interactive=False,
+            value=get_llm_status_ui(),
+        )
+
+        llm_set_btn.click(
+            fn=set_llm_key_ui,
+            inputs=[llm_key_input],
+            outputs=[llm_status, llm_key_input],
+        )
+        llm_clear_btn.click(
+            fn=clear_llm_key_ui,
+            inputs=[],
+            outputs=[llm_status, llm_key_input],
+        )
+        llm_refresh_btn.click(
+            fn=get_llm_status_ui,
+            inputs=[],
+            outputs=[llm_status],
+        )
+
     with gr.Accordion("⚙️ Step 1: Database Management (Enrollment)", open=False):
         gr.Markdown("Enroll known speakers into the ChromaDB vector database before querying.")
         with gr.Row():

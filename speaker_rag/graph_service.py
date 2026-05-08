@@ -23,6 +23,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import networkx as nx
 
+from .llm_extractor import LLMExtractor
+
 # ---------------------------------------------------------------------------
 # Optional spaCy NER — falls back to regex when not installed
 # ---------------------------------------------------------------------------
@@ -94,9 +96,14 @@ def extract_entities(text: str) -> List[Tuple[str, str]]:
 class GraphService:
     """Lightweight in-process knowledge graph for speaker-utterance-entity relations."""
 
-    def __init__(self, graph_path: Optional[str] = None):
+    def __init__(
+        self,
+        graph_path: Optional[str] = None,
+        llm_extractor: Optional[LLMExtractor] = None,
+    ):
         self._graph_path = Path(graph_path) if graph_path else None
         self._g: nx.DiGraph = nx.DiGraph()
+        self._llm_extractor = llm_extractor
         if self._graph_path and self._graph_path.exists():
             self._load()
             self._backfill_dialogue_nodes()
@@ -105,6 +112,14 @@ class GraphService:
             print(f"[GraphService] Loaded graph: {n} nodes, {e} edges.")
         else:
             print("[GraphService] Initialized empty knowledge graph.")
+        if self._llm_extractor and self._llm_extractor.available:
+            print(f"[GraphService] LLM entity extraction enabled (model={self._llm_extractor.model}).")
+        else:
+            reason = (
+                self._llm_extractor.unavailable_reason
+                if self._llm_extractor else "no extractor passed"
+            )
+            print(f"[GraphService] LLM extraction disabled — falling back to regex/spaCy ({reason}).")
 
     def _backfill_dialogue_nodes(self) -> None:
         """One-time migration: older graphs stored dialogue_id only as an utterance
@@ -180,18 +195,24 @@ class GraphService:
             dialogue_id=dialogue_id,
         )
 
-        # Entity nodes + MENTIONS edges
-        for ent_text, ent_label in extract_entities(text):
-            ent_id = f"ent::{ent_label}::{ent_text.lower()}"
-            if not self._g.has_node(ent_id):
-                self._g.add_node(
-                    ent_id,
-                    type="entity",
-                    label=ent_label,
-                    surface=ent_text,
-                )
-            if not self._g.has_edge(chroma_id, ent_id):
-                self._g.add_edge(chroma_id, ent_id, relation="MENTIONS", label=ent_label)
+        # Entity nodes + MENTIONS edges.
+        # When an LLM extractor is wired up, defer extraction — we'll batch
+        # per dialogue at persist time so the model sees full context.
+        # Otherwise fall back to the inline regex/spaCy path.
+        if self._llm_extractor and self._llm_extractor.available:
+            self._g.nodes[chroma_id]["entities_pending"] = True
+        else:
+            for ent_text, ent_label in extract_entities(text):
+                ent_id = f"ent::{ent_label}::{ent_text.lower()}"
+                if not self._g.has_node(ent_id):
+                    self._g.add_node(
+                        ent_id,
+                        type="entity",
+                        label=ent_label,
+                        surface=ent_text,
+                    )
+                if not self._g.has_edge(chroma_id, ent_id):
+                    self._g.add_edge(chroma_id, ent_id, relation="MENTIONS", label=ent_label)
 
         # Dialogue node + CONTAINS/HAS_PARTICIPANT edges, plus KNOWS via existing participants.
         # Using the dialogue's participant set keeps this O(participants) instead of O(all utterances).
@@ -459,11 +480,130 @@ class GraphService:
         return scored[:top_k] if top_k else scored
 
     # ------------------------------------------------------------------
+    # Deferred LLM-backed entity extraction
+    # ------------------------------------------------------------------
+
+    def set_llm_extractor(self, llm_extractor: Optional[LLMExtractor]) -> Dict[str, Any]:
+        """Swap the LLM extractor at runtime (e.g. when the user provides a key
+        via the UI). Returns a small status dict for the caller to surface."""
+        self._llm_extractor = llm_extractor
+        if llm_extractor and llm_extractor.available:
+            print(f"[GraphService] LLM extractor set (model={llm_extractor.model}).")
+            return {"enabled": True, "model": llm_extractor.model, "reason": None}
+        reason = (
+            llm_extractor.unavailable_reason if llm_extractor
+            else "extractor cleared"
+        )
+        print(f"[GraphService] LLM extractor disabled ({reason}).")
+        return {"enabled": False, "model": None, "reason": reason}
+
+    def llm_status(self) -> Dict[str, Any]:
+        """Report whether LLM extraction is currently active."""
+        if self._llm_extractor and self._llm_extractor.available:
+            return {"enabled": True, "model": self._llm_extractor.model, "reason": None}
+        reason = (
+            self._llm_extractor.unavailable_reason if self._llm_extractor
+            else "no extractor configured"
+        )
+        return {"enabled": False, "model": None, "reason": reason}
+
+    def extract_pending_entities(self) -> Dict[str, int]:
+        """Run LLM entity extraction for any utterances marked entities_pending.
+
+        Utterances are grouped by dialogue_id (one LLM call per dialogue) so the
+        model sees full conversational context. Free-floating utterances with no
+        dialogue_id are batched together as a single pseudo-dialogue.
+
+        Returns a small stats dict: {dialogues_processed, utterances_extracted,
+        entities_added, errors}.
+        """
+        stats = {
+            "dialogues_processed": 0,
+            "utterances_extracted": 0,
+            "entities_added": 0,
+            "errors": 0,
+        }
+        if not (self._llm_extractor and self._llm_extractor.available):
+            return stats
+
+        # Bucket pending utterances by dialogue_id
+        buckets: Dict[str, List[str]] = {}
+        for nid, attrs in self._g.nodes(data=True):
+            if attrs.get("type") == "utterance" and attrs.get("entities_pending"):
+                dlg = attrs.get("dialogue_id") or "_no_dialogue"
+                buckets.setdefault(dlg, []).append(nid)
+
+        if not buckets:
+            return stats
+
+        for dlg_id, utterance_ids in buckets.items():
+            # Sort by utterance_id when present so the LLM sees turns in order
+            utterance_ids.sort(
+                key=lambda x: self._g.nodes[x].get("utterance_id", 0)
+            )
+            payload = []
+            for uid in utterance_ids:
+                ud = self._g.nodes[uid]
+                speaker = next(
+                    (p for p in self._g.predecessors(uid)
+                     if self._g.nodes.get(p, {}).get("type") == "speaker"),
+                    "Unknown",
+                )
+                payload.append({
+                    "speaker": speaker.capitalize() if speaker else "Unknown",
+                    "text": ud.get("text", ""),
+                })
+
+            try:
+                results = self._llm_extractor.extract_dialogue_entities(payload)
+            except Exception as e:
+                print(f"[GraphService] extraction failed for dialogue {dlg_id}: {e}")
+                stats["errors"] += 1
+                continue
+
+            for uid, entities in zip(utterance_ids, results):
+                for ent_text, ent_label in entities:
+                    ent_id = f"ent::{ent_label}::{ent_text.lower()}"
+                    if not self._g.has_node(ent_id):
+                        self._g.add_node(
+                            ent_id,
+                            type="entity",
+                            label=ent_label,
+                            surface=ent_text,
+                        )
+                        stats["entities_added"] += 1
+                    if not self._g.has_edge(uid, ent_id):
+                        self._g.add_edge(
+                            uid, ent_id, relation="MENTIONS", label=ent_label
+                        )
+                # Clear the pending flag whether or not entities were found —
+                # an empty result is a valid answer ("no entities here").
+                self._g.nodes[uid].pop("entities_pending", None)
+                stats["utterances_extracted"] += 1
+
+            stats["dialogues_processed"] += 1
+
+        print(
+            f"[GraphService] LLM extraction: {stats['dialogues_processed']} dialogues, "
+            f"{stats['utterances_extracted']} utterances, "
+            f"{stats['entities_added']} new entity nodes, "
+            f"{stats['errors']} errors."
+        )
+        return stats
+
+    # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
 
     def persist(self) -> None:
-        """Serialize the graph to JSON. No-op if no graph_path was given."""
+        """Serialize the graph to JSON. No-op if no graph_path was given.
+
+        Before writing, runs deferred LLM entity extraction so persisted graphs
+        always have their MENTIONS edges populated.
+        """
+        if self._llm_extractor and self._llm_extractor.available:
+            self.extract_pending_entities()
+
         if not self._graph_path:
             return
         try:

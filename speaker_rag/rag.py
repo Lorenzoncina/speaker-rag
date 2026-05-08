@@ -8,6 +8,7 @@ from .identification_service import Identification_Service
 from .semantic_service import Semantic_Service
 from .diarization_service import Diarization_Service, parse_vtt
 from .graph_service import GraphService
+from .llm_extractor import LLMExtractor
 
 # ---------------------------------------------------------------------------
 # Question classification — routes the FACT SHEET KG section to the right
@@ -100,7 +101,14 @@ class SpeakerRAG:
         graph_path = os.path.join(
             os.path.dirname(os.path.normpath(chroma_dir)), "knowledge_graph.json"
         )
-        self.graph_service = GraphService(graph_path=graph_path)
+        # LLMExtractor self-disables if ANTHROPIC_API_KEY is missing or the
+        # anthropic SDK isn't installed. GraphService will print which mode
+        # it ended up in.
+        llm_extractor = LLMExtractor()
+        self.graph_service = GraphService(
+            graph_path=graph_path,
+            llm_extractor=llm_extractor,
+        )
 
         self.device = device
         print("SpeakerRAG initialization complete. Ready to build context.")
