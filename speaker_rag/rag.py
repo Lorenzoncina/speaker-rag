@@ -1,13 +1,71 @@
 import os
 import re
 import uuid
-from typing import Any, List, Dict, Optional
+from typing import Any, List, Dict, Optional, Tuple
 
 from .model_loader import load_audio_models
 from .identification_service import Identification_Service
 from .semantic_service import Semantic_Service
 from .diarization_service import Diarization_Service, parse_vtt
 from .graph_service import GraphService
+
+# ---------------------------------------------------------------------------
+# Question classification — routes the FACT SHEET KG section to the right
+# emit branch instead of always dumping the entity-centric default.
+# ---------------------------------------------------------------------------
+_EMOTION_VOCAB = ("joy", "anger", "sadness", "fear", "disgust", "surprise", "neutral")
+
+_PROFILE_COUNT_PAT = re.compile(
+    r"\b(how many (?:times|utterances)|how often)\b", re.IGNORECASE
+)
+_PROFILE_RANK_PAT = re.compile(
+    r"\b(most often|more often|most frequently|"
+    r"(?:who|which) .*?(?:shows?|expresses?|expressing|displays?) .*? most)\b",
+    re.IGNORECASE,
+)
+_PARTICIPANT_PAT = re.compile(
+    r"(?:"
+    r"who else"
+    r"|who (?:was|were) (?:with|present|in|there)"
+    r"|other (?:people|participants?|speakers?|friends?)"
+    r"|in (?:the|that) (?:room|conversation|scene)"
+    r"|(?:part of|in) (?:that|the) conversation"
+    r"|(?:of|which of) (?:his|her|their) friends?"
+    r"|with (?:him|her|them)"
+    r"|besides (?:the )?two"
+    r"|friends? (?:were|was) with"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _detect_emotion(question: str) -> Optional[str]:
+    """Return the first emotion keyword found in the question, lowercase, or None."""
+    if not question:
+        return None
+    q = question.lower()
+    for emo in _EMOTION_VOCAB:
+        if re.search(rf"\b{emo}\b", q):
+            return emo
+    return None
+
+
+def _classify_question(question: str) -> str:
+    """Map a question to one of: profile_count, profile_rank, dialogue_participants, default.
+
+    Profile branches require an emotion keyword to fire — otherwise a question like
+    'how many utterances are stored?' would be misrouted.
+    """
+    if not question:
+        return "default"
+    has_emotion = _detect_emotion(question) is not None
+    if has_emotion and _PROFILE_COUNT_PAT.search(question):
+        return "profile_count"
+    if has_emotion and _PROFILE_RANK_PAT.search(question):
+        return "profile_rank"
+    if _PARTICIPANT_PAT.search(question):
+        return "dialogue_participants"
+    return "default"
 
 class SpeakerRAG:
     def __init__(self,
@@ -301,27 +359,36 @@ class SpeakerRAG:
         context_lines = ["=== FACT SHEET: AUDIO FILE RESOLUTION ==="]
         context_lines.append("No audio provided. This is a text-only query.")
 
+        # In text-only mode, names matched in the question are an unreliable speaker
+        # signal — a name appearing inside a quoted span is the *object* of the quote,
+        # not the speaker. We always run unfiltered semantic search here and let each
+        # retrieved turn carry its own speaker label so the LLM can attribute correctly.
+        # The extracted names are still useful as a hint to the graph branches
+        # (profile_rank restriction, entity-centric traversal), so we keep them for
+        # the KG section only.
         extracted = self.extract_speakers_from_question(question)
         if extracted:
-            target_user_ids = extracted
-            resolution_note = f"Speaker filter (extracted from question): {', '.join(target_user_ids)}"
+            resolution_note = (
+                f"Names referenced in question: {', '.join(extracted)} "
+                f"(used as graph hint only — semantic search runs unfiltered)."
+            )
         else:
-            target_user_ids = []
-            resolution_note = "Speaker filter: none (unfiltered semantic search across all enrolled speakers)."
+            resolution_note = "Semantic search runs unfiltered across all enrolled speakers."
 
         context_lines.append(resolution_note)
         context_lines.append("")
 
-        fact_sheet = self._append_semantic_section(
+        fact_sheet, retrieved_dialogue_ids = self._append_semantic_section(
             context_lines=context_lines,
             question=question,
-            target_user_ids=target_user_ids if target_user_ids else None,
+            target_user_ids=None,
             session_id=None,
         )
         fact_sheet = self._append_graph_section(
             fact_sheet=fact_sheet,
             question=question,
-            speaker_ids=target_user_ids if target_user_ids else None,
+            speaker_ids=extracted if extracted else None,
+            retrieved_dialogue_ids=retrieved_dialogue_ids,
         )
 
         recommended_prompt = self._build_prompt(
@@ -423,7 +490,7 @@ class SpeakerRAG:
         context_lines.append("")
 
         # --- Semantic Search (Filtered by Identity) ---
-        fact_sheet = self._append_semantic_section(
+        fact_sheet, retrieved_dialogue_ids = self._append_semantic_section(
             context_lines=context_lines,
             question=question,
             target_user_ids=list(identified_users) if identified_users else None,
@@ -433,6 +500,7 @@ class SpeakerRAG:
             fact_sheet=fact_sheet,
             question=question,
             speaker_ids=list(identified_users) if identified_users else None,
+            retrieved_dialogue_ids=retrieved_dialogue_ids,
         )
 
         # Cleanup
@@ -451,15 +519,20 @@ class SpeakerRAG:
         question: str,
         target_user_ids: Optional[List[str]],
         session_id: Optional[str],
-    ) -> str:
+    ) -> Tuple[str, List[str]]:
         """Runs semantic search, appends the 'Relevant Past Statements' section to context_lines,
-        and returns the final fact sheet string."""
+        and returns (fact_sheet_string, retrieved_dialogue_ids).
+
+        The returned dialogue_ids preserve the order they were first surfaced and are used
+        downstream by the KG section to resolve participant-style questions.
+        """
         context_lines.append("=== FACT SHEET: RELEVANT PAST STATEMENTS ===")
         semantic_matches = self.semantic_service.search_by_text(
             query_text=question, top_k=5, session_id=session_id,
             target_user_ids=target_user_ids,
         )
 
+        retrieved_dialogue_ids: List[str] = []
         if not semantic_matches:
             if target_user_ids:
                 context_lines.append("No relevant past statements found for the identified speaker(s).")
@@ -473,6 +546,7 @@ class SpeakerRAG:
 
                 if dialogue_id and dialogue_id not in printed_dialogues:
                     printed_dialogues.add(dialogue_id)
+                    retrieved_dialogue_ids.append(str(dialogue_id))
                     try:
                         dialogue_records = self.semantic_service._collection.get(
                             where={"dialogue_id": dialogue_id}, include=["metadatas", "documents"]
@@ -497,16 +571,88 @@ class SpeakerRAG:
                     context_lines.append(f"Author: {meta.get('user_id', 'Unknown')} | Vocal Tone: {meta.get('acoustic_emotion', 'Unknown')} | Statement: \"{match.get('text', '')}\"")
 
         context_lines.append("")
-        return "\n".join(context_lines)
+        return "\n".join(context_lines), retrieved_dialogue_ids
 
     def _append_graph_section(
         self,
         fact_sheet: str,
         question: str,
         speaker_ids: Optional[List[str]] = None,
+        retrieved_dialogue_ids: Optional[List[str]] = None,
     ) -> str:
-        """Queries the knowledge graph and appends a KG context section to the fact sheet."""
+        """Queries the knowledge graph and appends a KG context section to the fact sheet.
+
+        The output is shaped by the question type so the FACT SHEET stays focused:
+          - profile_count          → exact count for (speaker, emotion)
+          - profile_rank           → ranked list of speakers for an emotion
+          - dialogue_participants  → participants of the dialogue(s) surfaced by semantic search
+          - default                → trimmed entity-centric traversal (no global co-speaker dump)
+        """
         lines = ["\n=== FACT SHEET: KNOWLEDGE GRAPH CONTEXT ==="]
+        qtype = _classify_question(question)
+        emotion = _detect_emotion(question)
+        mentioned_speakers = self.extract_speakers_from_question(question)
+
+        # ---- profile_count: "How many times does X express Y?" ----
+        if qtype == "profile_count":
+            targets = list(dict.fromkeys((speaker_ids or []) + mentioned_speakers))
+            if not targets:
+                lines.append(
+                    f"Profile-count question detected (emotion='{emotion}') but no enrolled "
+                    f"speaker was identified in the question."
+                )
+            else:
+                for spk in targets:
+                    n_text = self.graph_service.count_emotion(spk, emotion, channel="text")
+                    n_acou = self.graph_service.count_emotion(spk, emotion, channel="acoustic")
+                    lines.append(
+                        f"Aggregate: {spk.capitalize()} expressed '{emotion}' "
+                        f"{n_text} time(s) by text-emotion and {n_acou} time(s) by acoustic-emotion "
+                        f"across the enrolled corpus."
+                    )
+            lines.append("")
+            return fact_sheet + "\n".join(lines)
+
+        # ---- profile_rank: "Who shows X most often?" / "Joey or Ross?" ----
+        if qtype == "profile_rank":
+            ranked = self.graph_service.rank_speakers_by_emotion(
+                emotion,
+                restrict_to=mentioned_speakers if mentioned_speakers else None,
+                channel="text",
+                top_k=10,
+            )
+            if not ranked:
+                lines.append(f"No speakers with text-emotion '{emotion}' found in the corpus.")
+            else:
+                scope = (", ".join(s.capitalize() for s in mentioned_speakers)
+                         if mentioned_speakers else "all enrolled speakers")
+                lines.append(
+                    f"Ranking by '{emotion}' frequency (text-emotion channel) across {scope}:"
+                )
+                for s, n in ranked:
+                    lines.append(f"  - {s.capitalize()}: {n} utterance(s)")
+            lines.append("")
+            return fact_sheet + "\n".join(lines)
+
+        # ---- dialogue_participants: "who else was in the room / conversation?" ----
+        if qtype == "dialogue_participants":
+            if not retrieved_dialogue_ids:
+                lines.append(
+                    "Participant question detected but no dialogue could be resolved "
+                    "from semantic search."
+                )
+            else:
+                for dlg_id in retrieved_dialogue_ids:
+                    participants = self.graph_service.dialogue_participants(dlg_id)
+                    if participants:
+                        names = ", ".join(s.capitalize() for s in sorted(participants))
+                        lines.append(f"Dialogue {dlg_id} participants: {names}")
+                    else:
+                        lines.append(f"Dialogue {dlg_id}: no participants recorded in the graph.")
+            lines.append("")
+            return fact_sheet + "\n".join(lines)
+
+        # ---- default: trimmed entity-centric traversal ----
         kg = self.graph_service.query(question, speaker_ids=speaker_ids)
 
         if not kg["matched_entities"]:
@@ -514,9 +660,9 @@ class SpeakerRAG:
             lines.append("")
             return fact_sheet + "\n".join(lines)
 
-        ent_str = ", ".join(f"{e['text']} ({e['label']})" for e in kg["matched_entities"])
+        ent_str = ", ".join(f"{e['text']} ({e['label']})" for e in kg["matched_entities"][:10])
         if kg.get("fallback_mode"):
-            lines.append(f"Entities mentioned by speaker(s) (graph traversal): {ent_str}")
+            lines.append(f"Entities mentioned by speaker(s): {ent_str}")
         else:
             lines.append(f"Entities in question: {ent_str}")
 
@@ -526,24 +672,17 @@ class SpeakerRAG:
                 + ", ".join(s.capitalize() for s in kg["related_speakers"])
             )
 
-        if kg["co_speakers"]:
-            for cs in kg["co_speakers"]:
-                lines.append(
-                    f"Co-speakers: {cs['speaker_a'].capitalize()} ↔ "
-                    f"{cs['speaker_b'].capitalize()} "
-                    f"({cs['n_dialogues']} shared dialogue(s))"
-                )
+        # Skip the global co_speakers dump in default mode — it was the main FACT SHEET
+        # noise contributor. Participant questions get routed to the dialogue branch above.
 
         if kg["utterances"]:
             lines.append("\nGraph-retrieved utterances:")
-            for utt in kg["utterances"]:
+            for utt in kg["utterances"][:5]:
                 lines.append(
                     f"  {utt['speaker'].capitalize()} "
                     f"(Vocal: {utt['acoustic_emotion']} | Semantic: {utt['text_emotion']}): "
                     f"\"{utt['text']}\""
                 )
-        else:
-            lines.append("No relevant utterances found via graph traversal.")
 
         lines.append("")
         return fact_sheet + "\n".join(lines)

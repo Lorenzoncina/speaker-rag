@@ -5,11 +5,14 @@ Node types:
   speaker   — an enrolled or diarized speaker identity
   utterance — a single transcribed audio segment (keyed by its ChromaDB ID)
   entity    — a named entity extracted from transcription text
+  dialogue  — a single multi-speaker conversation (keyed by dialogue_id)
 
 Edge relations:
-  Speaker  --SAID-->     Utterance   {dialogue_id}
-  Utterance --MENTIONS--> Entity     {label: ORG/PERSON/GPE/…}
-  Speaker  --KNOWS-->    Speaker     {n_dialogues: int}  (bidirectional)
+  Speaker  --SAID-->            Utterance   {dialogue_id}
+  Utterance --MENTIONS-->       Entity      {label: ORG/PERSON/GPE/…}
+  Speaker  --KNOWS-->           Speaker     {n_dialogues: int}  (bidirectional)
+  Dialogue --CONTAINS-->        Utterance
+  Dialogue --HAS_PARTICIPANT--> Speaker
 
 Persistence: JSON file via networkx node_link serialization.
 """
@@ -96,11 +99,43 @@ class GraphService:
         self._g: nx.DiGraph = nx.DiGraph()
         if self._graph_path and self._graph_path.exists():
             self._load()
+            self._backfill_dialogue_nodes()
         n, e = self._g.number_of_nodes(), self._g.number_of_edges()
         if n:
             print(f"[GraphService] Loaded graph: {n} nodes, {e} edges.")
         else:
             print("[GraphService] Initialized empty knowledge graph.")
+
+    def _backfill_dialogue_nodes(self) -> None:
+        """One-time migration: older graphs stored dialogue_id only as an utterance
+        attribute. This adds Dialogue nodes + CONTAINS/HAS_PARTICIPANT edges so
+        per-dialogue traversal is O(1)."""
+        has_dialogue_node = any(
+            d.get("type") == "dialogue" for _, d in self._g.nodes(data=True)
+        )
+        if has_dialogue_node:
+            return
+
+        added = 0
+        for uid, ud in list(self._g.nodes(data=True)):
+            if ud.get("type") != "utterance":
+                continue
+            dlg_raw = ud.get("dialogue_id", "")
+            if not dlg_raw:
+                continue
+            dlg_node = f"dlg::{dlg_raw}"
+            if not self._g.has_node(dlg_node):
+                self._g.add_node(dlg_node, type="dialogue", dialogue_id=str(dlg_raw))
+                added += 1
+            self._g.add_edge(dlg_node, uid, relation="CONTAINS")
+            for pred in self._g.predecessors(uid):
+                if (self._g.nodes.get(pred, {}).get("type") == "speaker"
+                        and not self._g.has_edge(dlg_node, pred)):
+                    self._g.add_edge(dlg_node, pred, relation="HAS_PARTICIPANT")
+
+        if added:
+            print(f"[GraphService] Backfilled {added} dialogue nodes from existing utterances.")
+            self.persist()
 
     # ------------------------------------------------------------------
     # Enrollment
@@ -158,20 +193,25 @@ class GraphService:
             if not self._g.has_edge(chroma_id, ent_id):
                 self._g.add_edge(chroma_id, ent_id, relation="MENTIONS", label=ent_label)
 
-        # KNOWS edges: link co-speakers who share this dialogue
+        # Dialogue node + CONTAINS/HAS_PARTICIPANT edges, plus KNOWS via existing participants.
+        # Using the dialogue's participant set keeps this O(participants) instead of O(all utterances).
         if dialogue_id:
-            for node, attrs in self._g.nodes(data=True):
-                if (
-                    attrs.get("type") == "utterance"
-                    and attrs.get("dialogue_id") == dialogue_id
-                    and node != chroma_id
-                ):
-                    for pred in list(self._g.predecessors(node)):
-                        if (
-                            self._g.nodes.get(pred, {}).get("type") == "speaker"
-                            and pred != speaker_id
-                        ):
-                            self._add_knows(speaker_id, pred)
+            dlg_node = f"dlg::{dialogue_id}"
+            if not self._g.has_node(dlg_node):
+                self._g.add_node(dlg_node, type="dialogue", dialogue_id=dialogue_id)
+
+            existing_participants = [
+                p for p in self._g.successors(dlg_node)
+                if self._g.nodes.get(p, {}).get("type") == "speaker"
+            ]
+
+            self._g.add_edge(dlg_node, chroma_id, relation="CONTAINS")
+            if not self._g.has_edge(dlg_node, speaker_id):
+                self._g.add_edge(dlg_node, speaker_id, relation="HAS_PARTICIPANT")
+
+            for other in existing_participants:
+                if other != speaker_id:
+                    self._add_knows(speaker_id, other)
 
     def _add_knows(self, a: str, b: str) -> None:
         """Add or increment a bidirectional KNOWS edge between two speakers."""
@@ -333,6 +373,90 @@ class GraphService:
                         "speaker_b": nbr,
                         "n_dialogues": edge.get("n_dialogues", 0),
                     })
+
+    # ------------------------------------------------------------------
+    # Dialogue and emotion-aggregate queries
+    # ------------------------------------------------------------------
+
+    def dialogue_participants(self, dialogue_id: Any) -> List[str]:
+        """Return all speakers who participated in a given dialogue. O(1) hop."""
+        if dialogue_id in (None, ""):
+            return []
+        key = str(dialogue_id)
+        dlg_node = key if key.startswith("dlg::") else f"dlg::{key}"
+        if not self._g.has_node(dlg_node):
+            return []
+        return [
+            n for n in self._g.successors(dlg_node)
+            if self._g.nodes.get(n, {}).get("type") == "speaker"
+        ]
+
+    def count_emotion(self, speaker: str, emotion: str, channel: str = "text") -> int:
+        """Count utterances by `speaker` tagged with `emotion`.
+
+        channel: 'text'   — uses the text_emotion attribute (default)
+                 'acoustic' — uses acoustic_emotion
+                 'either' — counts an utterance if either channel matches
+        """
+        if not speaker or not emotion:
+            return 0
+        if not self._g.has_node(speaker) or self._g.nodes[speaker].get("type") != "speaker":
+            return 0
+        emo = emotion.strip().lower()
+        n = 0
+        for uid in self._g.successors(speaker):
+            ud = self._g.nodes.get(uid, {})
+            if ud.get("type") != "utterance":
+                continue
+            te = str(ud.get("text_emotion", "")).lower()
+            ae = str(ud.get("acoustic_emotion", "")).lower()
+            if channel == "text" and te == emo:
+                n += 1
+            elif channel == "acoustic" and ae == emo:
+                n += 1
+            elif channel == "either" and (te == emo or ae == emo):
+                n += 1
+        return n
+
+    def speaker_emotion_breakdown(self, speaker: str, channel: str = "text") -> Dict[str, int]:
+        """Return {emotion: count} across all utterances of `speaker`."""
+        out: Dict[str, int] = {}
+        if not self._g.has_node(speaker) or self._g.nodes[speaker].get("type") != "speaker":
+            return out
+        attr = "text_emotion" if channel == "text" else "acoustic_emotion"
+        for uid in self._g.successors(speaker):
+            ud = self._g.nodes.get(uid, {})
+            if ud.get("type") != "utterance":
+                continue
+            tag = str(ud.get(attr, "")).lower()
+            if tag:
+                out[tag] = out.get(tag, 0) + 1
+        return out
+
+    def rank_speakers_by_emotion(
+        self,
+        emotion: str,
+        restrict_to: Optional[List[str]] = None,
+        channel: str = "text",
+        top_k: int = 10,
+    ) -> List[Tuple[str, int]]:
+        """Rank speakers by how often they expressed `emotion`.
+
+        restrict_to: optional list of speaker ids to limit the ranking to.
+                     When omitted, ranks across all enrolled speakers.
+        Returns a list of (speaker, count) tuples sorted descending. Speakers
+        with zero matches are filtered out.
+        """
+        if restrict_to:
+            speakers = [s for s in restrict_to if self._g.has_node(s)]
+        else:
+            speakers = [
+                n for n, d in self._g.nodes(data=True) if d.get("type") == "speaker"
+            ]
+        scored = [(s, self.count_emotion(s, emotion, channel)) for s in speakers]
+        scored = [pair for pair in scored if pair[1] > 0]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:top_k] if top_k else scored
 
     # ------------------------------------------------------------------
     # Persistence

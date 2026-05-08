@@ -1,0 +1,157 @@
+[
+  {
+    "id": "identity_0000",
+    "q_type": "identity",
+    "question": "Who said: \"Oh, yeah. He's got that great baby smell. Get a whiff of his head.\"?",
+    "ground_truth": "Joey",
+    "evidence": [
+      {"dialogue_id": 47, "utterance_id": 15, "speaker": "Joey", "emotion": "joy", "sentiment": "positive", "utterance": "Oh, yeah. He's got that great baby smell. Get a whiff of his head."}
+    ]
+  },
+  {
+    "id": "identity_0001",
+    "q_type": "identity",
+    "question": "Who said: \"No. Rachel hooked me up with a tux! But not just any tux, Batmans tux!\"?",
+    "ground_truth": "Ross",
+    "evidence": [
+      {"dialogue_id": 63, "utterance_id": 2, "speaker": "Ross", "emotion": "joy", "sentiment": "positive", "utterance": "No. Rachel hooked me up with a tux! But not just any tux, Batmans tux!"}
+    ]
+  },
+  {
+    "id": "identity_0002",
+    "q_type": "identity",
+    "question": "Who said: \"I was the last one to know when Chandler got bitten by the peacock at the zoo.\"?",
+    "ground_truth": "Phoebe",
+    "evidence": [
+      {"dialogue_id": 81, "utterance_id": 14, "speaker": "Phoebe", "emotion": "anger", "sentiment": "negative", "utterance": "I was the last one to know when Chandler got bitten by the peacock at the zoo."}
+    ]
+  },
+  {
+    "id": "emotion_grounded_0000",
+    "q_type": "emotion_grounded",
+    "question": "What was Joey's emotional state when he said: \"No way! Kay look, if I have to go to the doctor for anything its gonna be for this thing sticking out of my stomach!\"?",
+    "ground_truth": "fear",
+    "evidence": [
+      {"dialogue_id": 12, "utterance_id": 9, "speaker": "Joey", "emotion": "fear", "sentiment": "negative", "utterance": "No way! Kay look, if I have to go to the doctor for anything its gonna be for this thing sticking out of my stomach!"}
+    ]
+  },
+  {
+    "id": "emotion_grounded_0001",
+    "q_type": "emotion_grounded",
+    "question": "How was Phoebe feeling when she said: \"My grandmother has this new boyfriend, and they're both kind of insecure in bed.\"?",
+    "ground_truth": "disgust",
+    "evidence": [
+      {"dialogue_id": 21, "utterance_id": 8, "speaker": "Phoebe", "emotion": "disgust", "sentiment": "negative", "utterance": "My grandmother has this new boyfriend, and they're both kind of insecure in bed."}
+    ]
+  },
+  {
+    "id": "emotion_grounded_0002",
+    "q_type": "emotion_grounded",
+    "question": "What emotion did Monica express when she said: \"I cant believe mom and dad are selling the house!\"?",
+    "ground_truth": "anger",
+    "evidence": [
+      {"dialogue_id": 738, "utterance_id": 6, "speaker": "Monica", "emotion": "anger", "sentiment": "negative", "utterance": "I cant believe mom and dad are selling the house!"}
+    ]
+  },
+  {
+    "id": "semantic_recall_0000",
+    "q_type": "semantic_recall",
+    "question": "What does Ross say about paleontology across the conversations?",
+    "ground_truth": "Ross identifies himself as a paleontology professor and discusses the paleontology section of a library — once asking for its location, once about increasing security there. He also mentions paleontology when distinguishing it as a topic of conversation.",
+    "evidence": [
+      {"dialogue_id": 531, "utterance_id": 9, "speaker": "Ross", "emotion": "neutral", "sentiment": "neutral", "utterance": "About paleontology."},
+      {"dialogue_id": 714, "utterance_id": 0, "speaker": "Ross", "emotion": "neutral", "sentiment": "neutral", "utterance": "Excuse me. Hi, Im a professor here. Do you know the Paleontology section, fifth floor, stack 437?"},
+      {"dialogue_id": 714, "utterance_id": 4, "speaker": "Ross", "emotion": "anger", "sentiment": "negative", "utterance": "Hi, I was wondering if it is possible to increase security in the Paleontology section?"}
+    ]
+  },
+  {
+    "id": "semantic_recall_0001",
+    "q_type": "semantic_recall",
+    "question": "What does Joey say about his agent Estelle?",
+    "ground_truth": "Joey mentions Estelle as the person who arranges his auditions and gets him work — once enthusiastically (\"Estelle lined up a bunch of auditions for me\") and twice in distress (\"Estelle said I didn't get it\" and \"Estelle, you gotta get me some work. I lost my health insurance.\").",
+    "evidence": [
+      {"dialogue_id": 12, "utterance_id": 1, "speaker": "Joey", "emotion": "joy", "sentiment": "positive", "utterance": "Hey! So Estelle lined up a bunch of auditions for me tomorrow and Ill have my health insurance back in no time."},
+      {"dialogue_id": 856, "utterance_id": 2, "speaker": "Joey", "emotion": "sadness", "sentiment": "negative", "utterance": "Estelle said I didn't get it."},
+      {"dialogue_id": 985, "utterance_id": 0, "speaker": "Joey", "emotion": "sadness", "sentiment": "negative", "utterance": "Estelle, you gotta get me some work. I-I lost my health insurance."}
+    ]
+  },
+  {
+    "id": "semantic_recall_0002",
+    "q_type": "semantic_recall",
+    "question": "What does Phoebe say about David?",
+    "ground_truth": "Phoebe describes David as 'David the scientist guy' she was in love with, who 'went to Russia and broke my heart'. She is surprised to see him reappear and asks what he is doing back when he is supposed to be in Russia.",
+    "evidence": [
+      {"dialogue_id": 214, "utterance_id": 0, "speaker": "Phoebe", "emotion": "surprise", "sentiment": "positive", "utterance": "Oh my God! Thats David!"},
+      {"dialogue_id": 214, "utterance_id": 2, "speaker": "Phoebe", "emotion": "sadness", "sentiment": "negative", "utterance": "David the scientist guy, David that I was in love with, David who went to Russia and broke my heart David!"},
+      {"dialogue_id": 214, "utterance_id": 6, "speaker": "Phoebe", "emotion": "surprise", "sentiment": "positive", "utterance": "David!  What-what are you doing here? Arent you supposed to be in Russia?"}
+    ]
+  },
+  {
+    "id": "graph_reasoning_0000",
+    "q_type": "graph_reasoning",
+    "question": "When Monica got upset at Chandler for telling David to propose to Phoebe, who else was in the room?",
+    "ground_truth": "Ross",
+    "evidence": [
+      {"dialogue_id": 29, "utterance_id": 1, "speaker": "Chandler", "emotion": "joy", "sentiment": "positive", "utterance": "I do! Want a hint? huh? \"I do\"  \"I do\"."},
+      {"dialogue_id": 29, "utterance_id": 3, "speaker": "Chandler", "emotion": "joy", "sentiment": "positive", "utterance": "David is going to propose to Phoebe."},
+      {"dialogue_id": 29, "utterance_id": 6, "speaker": "Monica", "emotion": "anger", "sentiment": "negative", "utterance": "Chandler, we have talked about this."},
+      {"dialogue_id": 29, "utterance_id": 7, "speaker": "Monica", "emotion": "anger", "sentiment": "negative", "utterance": "You are not supposed to give people advice!"},
+      {"dialogue_id": 29, "utterance_id": 13, "speaker": "Ross", "emotion": "neutral", "sentiment": "neutral", "utterance": "Oh, that's not what you want..."}
+    ]
+  },
+  {
+    "id": "graph_reasoning_0001",
+    "q_type": "graph_reasoning",
+    "question": "In the conversation where Rachel was sad about Ross being happy in Vermont, which of her friends were with her?",
+    "ground_truth": "Chandler, Monica, Phoebe",
+    "evidence": [
+      {"dialogue_id": 109, "utterance_id": 6, "speaker": "Rachel", "emotion": "sadness", "sentiment": "negative", "utterance": "Well, I just checked our messages and Joshua didnt call."},
+      {"dialogue_id": 109, "utterance_id": 8, "speaker": "Rachel", "emotion": "sadness", "sentiment": "negative", "utterance": "Ugh, you know what makes it so much worse, Ross is all happy in Vermont!"},
+      {"dialogue_id": 109, "utterance_id": 0, "speaker": "Monica", "emotion": "neutral", "sentiment": "neutral", "utterance": "Okay, Ive got some Ones, you wanna put them in her panties?"},
+      {"dialogue_id": 109, "utterance_id": 1, "speaker": "Chandler", "emotion": "disgust", "sentiment": "negative", "utterance": "No thanks, Mom!"},
+      {"dialogue_id": 109, "utterance_id": 9, "speaker": "Phoebe", "emotion": "joy", "sentiment": "positive", "utterance": "Come on! Look where you are!!"}
+    ]
+  },
+  {
+    "id": "graph_reasoning_0002",
+    "q_type": "graph_reasoning",
+    "question": "Monica argued with Chandler about not inviting his father to the wedding. Besides the two of them, who else was part of that conversation?",
+    "ground_truth": "Phoebe",
+    "evidence": [
+      {"dialogue_id": 82, "utterance_id": 0, "speaker": "Monica", "emotion": "neutral", "sentiment": "neutral", "utterance": "Chandler, we still havent gotten an RSVP from your dad."},
+      {"dialogue_id": 82, "utterance_id": 2, "speaker": "Monica", "emotion": "anger", "sentiment": "negative", "utterance": "Chandler! Hes your father.  he should be at the wedding."},
+      {"dialogue_id": 82, "utterance_id": 3, "speaker": "Chandler", "emotion": "disgust", "sentiment": "negative", "utterance": "I dont even know the man. Okay? Were not that close. I havent seen him in years."},
+      {"dialogue_id": 82, "utterance_id": 7, "speaker": "Phoebe", "emotion": "neutral", "sentiment": "neutral", "utterance": "Ooh, I think I wanna trade circles."},
+      {"dialogue_id": 82, "utterance_id": 11, "speaker": "Phoebe", "emotion": "neutral", "sentiment": "neutral", "utterance": "Okay, I think I need to do some shopping."}
+    ]
+  },
+  {
+    "id": "emotion_profile_0000",
+    "q_type": "emotion_profile",
+    "question": "Across the enrolled corpus, which of the six main characters expresses fear most often?",
+    "ground_truth": "Chandler (fear appears 54 times in his utterances, more than any other main character; Rachel and Ross are tied for second at 43)",
+    "evidence": [
+      {"dialogue_id": 109, "utterance_id": 16, "speaker": "Chandler", "emotion": "fear", "sentiment": "negative", "utterance": "That was a test!"},
+      {"dialogue_id": 109, "utterance_id": 17, "speaker": "Chandler", "emotion": "fear", "sentiment": "negative", "utterance": "In a couple of hours Im gonna get really drunk and wanna call Kathy and you guys are gonna have to stop me!"}
+    ]
+  },
+  {
+    "id": "emotion_profile_0001",
+    "q_type": "emotion_profile",
+    "question": "How many times does Monica express disgust across all the enrolled conversations?",
+    "ground_truth": "54 times",
+    "evidence": [
+      {"dialogue_id": 53, "utterance_id": 3, "speaker": "Monica", "emotion": "neutral", "sentiment": "neutral", "utterance": "Ohh Oh, thats okay I hate when people come back to complement the chef."}
+    ]
+  },
+  {
+    "id": "emotion_profile_0002",
+    "q_type": "emotion_profile",
+    "question": "Across the enrolled conversations, who shows anger more often: Joey or Ross?",
+    "ground_truth": "Joey (169 angry utterances vs. Ross's 162 — Joey edges out Ross by 7)",
+    "evidence": [
+      {"dialogue_id": 12, "utterance_id": 11, "speaker": "Joey", "emotion": "anger", "sentiment": "negative", "utterance": "Why did I have to start working out again?  Damn you 15s!"},
+      {"dialogue_id": 38, "utterance_id": 0, "speaker": "Ross", "emotion": "anger", "sentiment": "negative", "utterance": "Yeah, they think they can charge me for some dirty movie and a bag of Mashuga nuts, they got another think coming."}
+    ]
+  }
+]

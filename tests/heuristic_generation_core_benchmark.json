@@ -1,0 +1,578 @@
+[
+  {
+    "q_type": "identity",
+    "question": "Who said: \"And, I dont know, if it starts to rain\"?",
+    "ground_truth": "Ross",
+    "evidence": [
+      {
+        "dialogue_id": 866,
+        "utterance_id": 8,
+        "speaker": "Ross",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "And, I dont know, if it starts to rain"
+      }
+    ],
+    "id": "identity_0000"
+  },
+  {
+    "q_type": "identity",
+    "question": "Who said: \"Okay, look, I think we have to tell Rachel she messed up her dessert.\"?",
+    "ground_truth": "Joey",
+    "evidence": [
+      {
+        "dialogue_id": 7,
+        "utterance_id": 0,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Okay, look, I think we have to tell Rachel she messed up her dessert."
+      }
+    ],
+    "id": "identity_0001"
+  },
+  {
+    "q_type": "identity",
+    "question": "Who said: \"No I know, because to be a grandmother you have to be married and have children and I dont have any of those things.\"?",
+    "ground_truth": "Rachel",
+    "evidence": [
+      {
+        "dialogue_id": 464,
+        "utterance_id": 18,
+        "speaker": "Rachel",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "No I know, because to be a grandmother you have to be married and have children and I dont have any of those things."
+      }
+    ],
+    "id": "identity_0002"
+  },
+  {
+    "q_type": "emotion_grounded",
+    "question": "What was Joey's emotional state when they said: \"Dude, if you go back out there, youre gonna be Dead Ross!\"?",
+    "ground_truth": "anger",
+    "evidence": [
+      {
+        "dialogue_id": 888,
+        "utterance_id": 1,
+        "speaker": "Joey",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Dude, if you go back out there, youre gonna be Dead Ross!"
+      }
+    ],
+    "id": "emotion_grounded_0000"
+  },
+  {
+    "q_type": "emotion_grounded",
+    "question": "What was Joey's emotional state when they said: \"Oh-oh-oh, yeah!  That's right, you take good care of those babies!\"?",
+    "ground_truth": "joy",
+    "evidence": [
+      {
+        "dialogue_id": 197,
+        "utterance_id": 0,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Oh-oh-oh, yeah!  That's right, you take good care of those babies!"
+      }
+    ],
+    "id": "emotion_grounded_0001"
+  },
+  {
+    "q_type": "emotion_grounded",
+    "question": "What was Monica's emotional state when they said: \"So anyway, um, his head is like flopping down Broadway, right, and I'm just thinking... how inappropriate this is.\"?",
+    "ground_truth": "joy",
+    "evidence": [
+      {
+        "dialogue_id": 561,
+        "utterance_id": 1,
+        "speaker": "Monica",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "So anyway, um, his head is like flopping down Broadway, right, and I'm just thinking... how inappropriate this is."
+      }
+    ],
+    "id": "emotion_grounded_0002"
+  },
+  {
+    "q_type": "semantic_recall",
+    "question": "What did Ross say about Blood?",
+    "ground_truth": "Ross mentioned Blood in: \"Stop saying, \"Blood\" to strangers.\"",
+    "evidence": [
+      {
+        "dialogue_id": 865,
+        "utterance_id": 4,
+        "speaker": "Ross",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "Stop saying, \"Blood\" to strangers."
+      }
+    ],
+    "id": "semantic_recall_0000"
+  },
+  {
+    "q_type": "semantic_recall",
+    "question": "What did Monica say about Count?",
+    "ground_truth": "Monica mentioned Count in: \"Count in our heads as-as good\"",
+    "evidence": [
+      {
+        "dialogue_id": 743,
+        "utterance_id": 0,
+        "speaker": "Monica",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Count in our heads as-as good"
+      }
+    ],
+    "id": "semantic_recall_0001"
+  },
+  {
+    "q_type": "semantic_recall",
+    "question": "What did Ross say about RESPECTFULLY?",
+    "ground_truth": "Ross mentioned RESPECTFULLY in: \"Oh oh oh! I RESPECTFULLY DISAGREE!!\"",
+    "evidence": [
+      {
+        "dialogue_id": 123,
+        "utterance_id": 10,
+        "speaker": "Ross",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Oh oh oh! I RESPECTFULLY DISAGREE!!"
+      }
+    ],
+    "id": "semantic_recall_0002"
+  },
+  {
+    "q_type": "graph_reasoning",
+    "question": "In the dialogue where Rachel got upset about Joey, who else was present in the conversation?",
+    "ground_truth": "Monica, Phoebe, Ross",
+    "evidence": [
+      {
+        "dialogue_id": 932,
+        "utterance_id": 0,
+        "speaker": "Phoebe",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Good for you! And hey, I thought your paper on punctuated equilibrium    in the Devonian era was top notch!"
+      },
+      {
+        "dialogue_id": 932,
+        "utterance_id": 1,
+        "speaker": "Ross",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Stop going through my stuff !"
+      },
+      {
+        "dialogue_id": 932,
+        "utterance_id": 2,
+        "speaker": "Rachel",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Hey!"
+      },
+      {
+        "dialogue_id": 932,
+        "utterance_id": 3,
+        "speaker": "Monica",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Hey!"
+      },
+      {
+        "dialogue_id": 932,
+        "utterance_id": 4,
+        "speaker": "Rachel",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "I just wanted to let you know I've changed my mind: I'm gonna    do it, I'm gonna kiss Joey."
+      },
+      {
+        "dialogue_id": 932,
+        "utterance_id": 5,
+        "speaker": "Monica",
+        "emotion": "fear",
+        "sentiment": "negative",
+        "utterance": "No, you can't! Friends hooking up is a bad idea."
+      },
+      {
+        "dialogue_id": 932,
+        "utterance_id": 6,
+        "speaker": "Rachel",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Please, what about you and Chandler?"
+      },
+      {
+        "dialogue_id": 932,
+        "utterance_id": 7,
+        "speaker": "Monica",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "That's different! I was drunk and stupid!"
+      },
+      {
+        "dialogue_id": 932,
+        "utterance_id": 8,
+        "speaker": "Rachel",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Well hello !"
+      },
+      {
+        "dialogue_id": 932,
+        "utterance_id": 9,
+        "speaker": "Monica",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "What about all the guys that you've got the phone numbers from?    Why don't you just kiss one of them?"
+      },
+      {
+        "dialogue_id": 932,
+        "utterance_id": 10,
+        "speaker": "Rachel",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "I could, I could but I don't want to! I want to kiss Joey!"
+      },
+      {
+        "dialogue_id": 932,
+        "utterance_id": 11,
+        "speaker": "Monica",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Alright . I think it's a big mistake but it's your decision."
+      },
+      {
+        "dialogue_id": 932,
+        "utterance_id": 12,
+        "speaker": "Rachel",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "I'm gonna do it."
+      },
+      {
+        "dialogue_id": 932,
+        "utterance_id": 13,
+        "speaker": "Monica",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "And I can't stop you."
+      },
+      {
+        "dialogue_id": 932,
+        "utterance_id": 14,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "No."
+      },
+      {
+        "dialogue_id": 932,
+        "utterance_id": 15,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Hey Rach, have you seen Charlie anywhere?"
+      },
+      {
+        "dialogue_id": 932,
+        "utterance_id": 16,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "I'm smarter than"
+      }
+    ],
+    "id": "graph_reasoning_0000"
+  },
+  {
+    "q_type": "graph_reasoning",
+    "question": "In the dialogue where Monica got upset about Joey, who else was present in the conversation?",
+    "ground_truth": "Phoebe",
+    "evidence": [
+      {
+        "dialogue_id": 648,
+        "utterance_id": 0,
+        "speaker": "Monica",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "It's not just the drum noise."
+      },
+      {
+        "dialogue_id": 648,
+        "utterance_id": 1,
+        "speaker": "Monica",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Every five minutes, Joey throws his sticks in the air, and I have to hear, \"Oh my eye!"
+      },
+      {
+        "dialogue_id": 648,
+        "utterance_id": 2,
+        "speaker": "Monica",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Oh god, my eye!\""
+      },
+      {
+        "dialogue_id": 648,
+        "utterance_id": 3,
+        "speaker": "Monica",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "I mean, it is so annoying."
+      },
+      {
+        "dialogue_id": 648,
+        "utterance_id": 4,
+        "speaker": "Phoebe",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Yes, thank you. You see, this is how normal people are supposed to react to drums."
+      },
+      {
+        "dialogue_id": 648,
+        "utterance_id": 5,
+        "speaker": "Monica",
+        "emotion": "surprise",
+        "sentiment": "negative",
+        "utterance": "Phoebe, you got Joey drums to annoy Rachel, so she wouldn't wanna live there anymore?"
+      },
+      {
+        "dialogue_id": 648,
+        "utterance_id": 6,
+        "speaker": "Phoebe",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Maybe on some level."
+      }
+    ],
+    "id": "graph_reasoning_0001"
+  },
+  {
+    "q_type": "graph_reasoning",
+    "question": "In the dialogue where Ross got upset about Joey, who else was present in the conversation?",
+    "ground_truth": "Joey",
+    "evidence": [
+      {
+        "dialogue_id": 395,
+        "utterance_id": 0,
+        "speaker": "Joey",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Come on! Admit it! That was the best nap you ever had!"
+      },
+      {
+        "dialogue_id": 395,
+        "utterance_id": 1,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Ive had better."
+      },
+      {
+        "dialogue_id": 395,
+        "utterance_id": 2,
+        "speaker": "Joey",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Okay! When?!"
+      },
+      {
+        "dialogue_id": 395,
+        "utterance_id": 3,
+        "speaker": "Ross",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "All right! All right! It was the best nap ever!"
+      },
+      {
+        "dialogue_id": 395,
+        "utterance_id": 4,
+        "speaker": "Joey",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Uh-huh!"
+      },
+      {
+        "dialogue_id": 395,
+        "utterance_id": 5,
+        "speaker": "Ross",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Ive said it! Okay?! But its over Joey!"
+      },
+      {
+        "dialogue_id": 395,
+        "utterance_id": 6,
+        "speaker": "Joey",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "I want to do it again."
+      },
+      {
+        "dialogue_id": 395,
+        "utterance_id": 7,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "We"
+      },
+      {
+        "dialogue_id": 395,
+        "utterance_id": 8,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Why not?"
+      }
+    ],
+    "id": "graph_reasoning_0002"
+  },
+  {
+    "q_type": "emotion_profile",
+    "question": "Across all the conversations enrolled in the system, what is Joey's most frequent non-neutral emotion?",
+    "ground_truth": "joy (occurs 279 times across the enrolled corpus)",
+    "evidence": [
+      {
+        "dialogue_id": 11,
+        "utterance_id": 7,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Bye, Pheebs!"
+      },
+      {
+        "dialogue_id": 11,
+        "utterance_id": 8,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "London baby!!"
+      },
+      {
+        "dialogue_id": 12,
+        "utterance_id": 1,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Hey! So Estelle lined up a bunch of auditions for me tomorrow and Ill have my health insurance back in no time."
+      },
+      {
+        "dialogue_id": 17,
+        "utterance_id": 1,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Oh umm, my big scene is coming up. Big scene coming up."
+      },
+      {
+        "dialogue_id": 18,
+        "utterance_id": 3,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Hey Ross, wouldn't it be great if we could go two straight hours without dropping it?!"
+      }
+    ],
+    "id": "emotion_profile_0000"
+  },
+  {
+    "q_type": "emotion_profile",
+    "question": "Across all the conversations enrolled in the system, what is Phoebe's most frequent non-neutral emotion?",
+    "ground_truth": "joy (occurs 226 times across the enrolled corpus)",
+    "evidence": [
+      {
+        "dialogue_id": 11,
+        "utterance_id": 9,
+        "speaker": "Phoebe",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Oh, do you need a hug? You dont have to bring me anything!"
+      },
+      {
+        "dialogue_id": 20,
+        "utterance_id": 2,
+        "speaker": "Phoebe",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Yay!! Oh so, youre not, youre not mad at us anymore?"
+      },
+      {
+        "dialogue_id": 21,
+        "utterance_id": 13,
+        "speaker": "Phoebe",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Thanks."
+      },
+      {
+        "dialogue_id": 35,
+        "utterance_id": 1,
+        "speaker": "Phoebe",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "I did it!"
+      },
+      {
+        "dialogue_id": 35,
+        "utterance_id": 2,
+        "speaker": "Phoebe",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "I rode a bike!"
+      }
+    ],
+    "id": "emotion_profile_0001"
+  },
+  {
+    "q_type": "emotion_profile",
+    "question": "Across all the conversations enrolled in the system, what is Joey's most frequent non-neutral emotion?",
+    "ground_truth": "joy (occurs 279 times across the enrolled corpus)",
+    "evidence": [
+      {
+        "dialogue_id": 11,
+        "utterance_id": 7,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Bye, Pheebs!"
+      },
+      {
+        "dialogue_id": 11,
+        "utterance_id": 8,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "London baby!!"
+      },
+      {
+        "dialogue_id": 12,
+        "utterance_id": 1,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Hey! So Estelle lined up a bunch of auditions for me tomorrow and Ill have my health insurance back in no time."
+      },
+      {
+        "dialogue_id": 17,
+        "utterance_id": 1,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Oh umm, my big scene is coming up. Big scene coming up."
+      },
+      {
+        "dialogue_id": 18,
+        "utterance_id": 3,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Hey Ross, wouldn't it be great if we could go two straight hours without dropping it?!"
+      }
+    ],
+    "id": "emotion_profile_0002"
+  }
+]
