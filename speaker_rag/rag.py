@@ -3,12 +3,15 @@ import re
 import uuid
 from typing import Any, List, Dict, Optional, Tuple
 
+from chromadb import PersistentClient
+
 from .model_loader import load_audio_models
 from .identification_service import Identification_Service
 from .semantic_service import Semantic_Service
 from .diarization_service import Diarization_Service, parse_vtt
 from .graph_service import GraphService
 from .llm_extractor import LLMExtractor
+from .entity_resolver import EntityResolver
 
 # ---------------------------------------------------------------------------
 # Question classification — routes the FACT SHEET KG section to the right
@@ -73,6 +76,7 @@ class SpeakerRAG:
                  chroma_dir: str = "./enrolled_data/chroma",
                  collection_name: str = "speaker_embeddings",
                  semantic_collection_name: str = "semantic_embeddings",
+                 entity_collection_name: str = "entity_embeddings",
                  device: str = "cuda",
                  hf_auth_token: str = None):
         """Initializes the Dual-RAG System (Speaker ID + Semantic) without a hardcoded LLM."""
@@ -94,6 +98,15 @@ class SpeakerRAG:
             collection_name=semantic_collection_name
         )
 
+        # Dedicated Chroma collection for entity-level cosine search (used by
+        # EntityResolver to dedupe newly-extracted entities against existing ones).
+        self._entity_chroma_client = PersistentClient(path=chroma_dir)
+        self._entity_collection_name = entity_collection_name
+        self._entity_collection = self._entity_chroma_client.get_or_create_collection(
+            name=entity_collection_name,
+            metadata={"hnsw:space": "cosine"},
+        )
+
         self._diarization_embedding_model = audio_models["embedding_model"]
         self._hf_auth_token = hf_auth_token
         self._diarization_service = None  # Lazy-loaded on first use
@@ -105,9 +118,15 @@ class SpeakerRAG:
         # anthropic SDK isn't installed. GraphService will print which mode
         # it ended up in.
         llm_extractor = LLMExtractor()
+        entity_resolver = EntityResolver(
+            chroma_collection=self._entity_collection,
+            embedding_model=semantic_model,
+            llm_extractor=llm_extractor,
+        )
         self.graph_service = GraphService(
             graph_path=graph_path,
             llm_extractor=llm_extractor,
+            entity_resolver=entity_resolver,
         )
 
         self.device = device
@@ -124,14 +143,31 @@ class SpeakerRAG:
         return self._diarization_service
     
     def clear_database(self) -> dict:
-        """Clears all stored speakers, semantics, and the knowledge graph."""
+        """Clears all stored speakers, semantics, entities, and the knowledge graph."""
         succ_audio = self.audio_service.clear_collection()
         succ_sem = self.semantic_service.clear_collection()
+        succ_ent = self._clear_entity_collection()
         self.graph_service.clear()
-        if succ_audio and succ_sem:
+        if succ_audio and succ_sem and succ_ent:
             return {"status": "success", "message": "Vector databases and knowledge graph cleared successfully."}
         else:
-            return {"status": "error", "message": "Failed to clear databases."}
+            return {"status": "error", "message": "Failed to clear one or more databases."}
+
+    def _clear_entity_collection(self) -> bool:
+        try:
+            self._entity_chroma_client.delete_collection(self._entity_collection_name)
+            self._entity_collection = self._entity_chroma_client.get_or_create_collection(
+                name=self._entity_collection_name,
+                metadata={"hnsw:space": "cosine"},
+            )
+            # Re-bind the resolver's collection reference so it sees the fresh handle.
+            if self.graph_service and self.graph_service._entity_resolver:
+                self.graph_service._entity_resolver._collection = self._entity_collection
+            print(f"Collection '{self._entity_collection_name}' successfully cleared.")
+            return True
+        except Exception as e:
+            print(f"Failed to clear entity collection: {e}")
+            return False
 
     def index_audio(self, audio_paths: List[str], user_ids: List[str] = None, session_id: str = "rag_session") -> dict:
         """Enrolls audio files into the ID database and Semantic database."""
@@ -679,6 +715,20 @@ class SpeakerRAG:
                 "Related speakers via graph: "
                 + ", ".join(s.capitalize() for s in kg["related_speakers"])
             )
+
+        # Typed-fact edges (Phase 4) — surface the relations that radiate from
+        # the matched entities/speakers so questions like "where does Jill
+        # Goodacre work?" can be answered from the graph rather than only the
+        # utterances that mention her.
+        typed_facts = kg.get("typed_facts") or []
+        if typed_facts:
+            lines.append("\nKnown typed facts about matched entities:")
+            for f in typed_facts:
+                lines.append(
+                    f"  - {f['subject']} {f['predicate']} {f['object']}"
+                )
+                if f.get("fact"):
+                    lines.append(f'      "{f["fact"]}"')
 
         # Skip the global co_speakers dump in default mode — it was the main FACT SHEET
         # noise contributor. Participant questions get routed to the dialogue branch above.

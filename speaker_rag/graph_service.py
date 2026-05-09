@@ -18,12 +18,18 @@ Persistence: JSON file via networkx node_link serialization.
 """
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import networkx as nx
 
 from .llm_extractor import LLMExtractor
+from .entity_resolver import EntityResolver, ResolutionDecision
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 # ---------------------------------------------------------------------------
 # Optional spaCy NER — falls back to regex when not installed
@@ -100,10 +106,12 @@ class GraphService:
         self,
         graph_path: Optional[str] = None,
         llm_extractor: Optional[LLMExtractor] = None,
+        entity_resolver: Optional[EntityResolver] = None,
     ):
         self._graph_path = Path(graph_path) if graph_path else None
         self._g: nx.DiGraph = nx.DiGraph()
         self._llm_extractor = llm_extractor
+        self._entity_resolver = entity_resolver
         if self._graph_path and self._graph_path.exists():
             self._load()
             self._backfill_dialogue_nodes()
@@ -120,6 +128,10 @@ class GraphService:
                 if self._llm_extractor else "no extractor passed"
             )
             print(f"[GraphService] LLM extraction disabled — falling back to regex/spaCy ({reason}).")
+        if self._entity_resolver and self._entity_resolver.available:
+            print("[GraphService] Entity resolver enabled (cosine + LLM judge).")
+        else:
+            print("[GraphService] Entity resolver disabled.")
 
     def _backfill_dialogue_nodes(self) -> None:
         """One-time migration: older graphs stored dialogue_id only as an utterance
@@ -246,11 +258,80 @@ class GraphService:
     # Query
     # ------------------------------------------------------------------
 
+    def _display_name(self, node_id: str) -> str:
+        """Human-readable label for a node id (speaker → capitalized id, entity → surface)."""
+        nd = self._g.nodes.get(node_id, {})
+        ntype = nd.get("type", "")
+        if ntype == "speaker":
+            return str(node_id).capitalize()
+        if ntype == "entity":
+            return nd.get("surface", node_id)
+        return str(node_id)
+
+    def _collect_typed_facts(
+        self,
+        node_ids: List[str],
+        max_facts: int = 15,
+        include_invalidated: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Collect typed-fact edges incident to any node in `node_ids`.
+
+        Walks both directions (the node may be subject OR object of a fact).
+        Filters out invalidated facts (valid_to set) unless include_invalidated.
+        """
+        seen: set = set()
+        out: List[Dict[str, Any]] = []
+        for nid in node_ids:
+            if not self._g.has_node(nid):
+                continue
+            # Outgoing — node is subject
+            for _, tgt, attrs in self._g.out_edges(nid, data=True):
+                for f in attrs.get("facts", []) or []:
+                    if not include_invalidated and f.get("valid_to"):
+                        continue
+                    key = (nid, tgt, f.get("type", ""), f.get("fact", ""))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    out.append({
+                        "subject": self._display_name(nid),
+                        "predicate": f.get("type", ""),
+                        "object": self._display_name(tgt),
+                        "fact": f.get("fact", ""),
+                        "source_utterances": f.get("source_utterances", []),
+                        "valid_from": f.get("valid_from"),
+                        "valid_to": f.get("valid_to"),
+                    })
+                    if len(out) >= max_facts:
+                        return out
+            # Incoming — node is object
+            for src, _, attrs in self._g.in_edges(nid, data=True):
+                for f in attrs.get("facts", []) or []:
+                    if not include_invalidated and f.get("valid_to"):
+                        continue
+                    key = (src, nid, f.get("type", ""), f.get("fact", ""))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    out.append({
+                        "subject": self._display_name(src),
+                        "predicate": f.get("type", ""),
+                        "object": self._display_name(nid),
+                        "fact": f.get("fact", ""),
+                        "source_utterances": f.get("source_utterances", []),
+                        "valid_from": f.get("valid_from"),
+                        "valid_to": f.get("valid_to"),
+                    })
+                    if len(out) >= max_facts:
+                        return out
+        return out
+
     def query(
         self,
         question: str,
         speaker_ids: Optional[List[str]] = None,
         max_utterances: int = 5,
+        max_facts: int = 10,
     ) -> Dict[str, Any]:
         """Walk the graph from entities found in the question.
 
@@ -266,6 +347,7 @@ class GraphService:
           related_speakers  — speakers connected to those entities
           utterances        — top matching utterances
           co_speakers       — KNOWS pairs among related speakers
+          typed_facts       — typed-relation edges incident to matched entities/speakers
           fallback_mode     — True when speaker-centric fallback was used
         """
         out: Dict[str, Any] = {
@@ -273,6 +355,7 @@ class GraphService:
             "related_speakers": [],
             "utterances": [],
             "co_speakers": [],
+            "typed_facts": [],
             "fallback_mode": False,
         }
 
@@ -339,6 +422,12 @@ class GraphService:
 
             out["related_speakers"] = list(seen_speakers)
             self._append_knows(out, seen_speakers)
+
+            # Surface typed-fact edges incident to the matched entities AND the
+            # speakers we found. This is the Phase 4 hook: WORKS_AT, HAS_AGENT,
+            # IS_FRIENDS_WITH, etc. become first-class context for the LLM.
+            fact_seed = list(set(matched_ent_ids) | seen_speakers)
+            out["typed_facts"] = self._collect_typed_facts(fact_seed, max_facts=max_facts)
             return out
 
         # --- 2. Speaker-centric fallback ---
@@ -380,6 +469,12 @@ class GraphService:
 
         out["related_speakers"] = list(seen_speakers_fb)
         self._append_knows(out, seen_speakers_fb)
+
+        # Typed facts on the speakers themselves (e.g. Joey HAS_AGENT Estelle
+        # — useful even when the question has no entity names).
+        out["typed_facts"] = self._collect_typed_facts(
+            list(seen_speakers_fb), max_facts=max_facts
+        )
         return out
 
     def _append_knows(self, out: Dict[str, Any], seen_speakers: set) -> None:
@@ -507,24 +602,470 @@ class GraphService:
         )
         return {"enabled": False, "model": None, "reason": reason}
 
+    def _upsert_entity(
+        self,
+        name: str,
+        etype: str,
+        description: str,
+        stats: Dict[str, int],
+        dialogue_context: str = "",
+    ) -> str:
+        """Resolve a candidate entity, then create-or-merge into the graph.
+
+        Returns the canonical node id (either newly created or the target of a
+        merge decision). When the resolver judges the candidate to be a duplicate
+        of an existing entity, that entity's description, alias list, and Chroma
+        embedding are updated; no new node is created.
+        """
+        # 1. Try resolution (cosine + optional LLM judge).
+        decision = ResolutionDecision(is_duplicate=False)
+        if self._entity_resolver and self._entity_resolver.available:
+            decision = self._entity_resolver.resolve(
+                name=name,
+                etype=etype,
+                description=description,
+                dialogue_context=dialogue_context,
+            )
+
+        # 2. Duplicate path: merge candidate metadata into the existing target.
+        if (
+            decision.is_duplicate
+            and decision.target_node_id
+            and self._g.has_node(decision.target_node_id)
+        ):
+            target_id = decision.target_node_id
+            nd = self._g.nodes[target_id]
+            new_surface = decision.canonical_name or nd.get("surface", name)
+            new_desc = decision.canonical_description or nd.get("description", description)
+            old_surface = nd.get("surface", "")
+            nd["surface"] = new_surface
+            nd["description"] = new_desc
+            nd["last_seen"] = _now_iso()
+            nd["n_mentions"] = nd.get("n_mentions", 0) + 1
+            aliases = set(nd.get("aliases", []))
+            for alt in (name, old_surface):
+                if alt and alt != new_surface:
+                    aliases.add(alt)
+            nd["aliases"] = sorted(aliases)
+            if self._entity_resolver:
+                self._entity_resolver.update(
+                    target_id, new_surface, nd.get("label", etype), new_desc
+                )
+            stats["entities_merged"] = stats.get("entities_merged", 0) + 1
+            method_key = f"merges_{decision.method}" if decision.method else "merges_other"
+            stats[method_key] = stats.get(method_key, 0) + 1
+            print(
+                f"[Resolver] merge ({decision.method}, score={decision.top_score:.3f}): "
+                f"'{name}' → '{new_surface}' [{etype}]"
+            )
+            return target_id
+
+        # 3. New entity path. Use a stable conventional id; if a node already
+        #    exists at that id (very near-duplicate the resolver missed) we
+        #    fall back to a description-merge — same shape as before.
+        ent_id = f"ent::{etype}::{name.lower()}"
+        if not self._g.has_node(ent_id):
+            self._g.add_node(
+                ent_id,
+                type="entity",
+                label=etype,
+                surface=name,
+                description=description or "",
+                n_mentions=1,
+                first_seen=_now_iso(),
+                last_seen=_now_iso(),
+                aliases=[],
+            )
+            stats["entities_added"] = stats.get("entities_added", 0) + 1
+            if self._entity_resolver:
+                self._entity_resolver.add(ent_id, name, etype, description)
+            return ent_id
+
+        # Same conventional id exists. Cosine missed the match — likely because
+        # descriptions diverged across dialogues. Escalate to the LLM judge before
+        # silently merging or splitting.
+        existing_node = self._g.nodes[ent_id]
+
+        judge_result = None
+        if self._llm_extractor and self._llm_extractor.available:
+            judge_candidates = [{
+                "id": ent_id,
+                "name": existing_node.get("surface", ""),
+                "type": existing_node.get("label", etype),
+                "description": existing_node.get("description", ""),
+                "score": 1.0,  # synthetic — name/type match exactly
+            }]
+            try:
+                judge_result = self._llm_extractor.judge_entity_duplicate(
+                    candidate={"name": name, "type": etype, "description": description},
+                    existing=judge_candidates,
+                    dialogue_context=dialogue_context,
+                )
+            except Exception as e:
+                print(f"[GraphService] id-collision judge failed: {e}")
+
+        if judge_result and judge_result.get("is_duplicate"):
+            # Judge confirmed: merge into existing node.
+            new_surface = judge_result.get("canonical_name") or existing_node.get("surface", name)
+            new_desc = judge_result.get("canonical_description") or existing_node.get("description", description)
+            old_surface = existing_node.get("surface", "")
+            existing_node["surface"] = new_surface
+            existing_node["description"] = new_desc
+            existing_node["last_seen"] = _now_iso()
+            existing_node["n_mentions"] = existing_node.get("n_mentions", 0) + 1
+            aliases = set(existing_node.get("aliases", []))
+            for alt in (name, old_surface):
+                if alt and alt != new_surface:
+                    aliases.add(alt)
+            existing_node["aliases"] = sorted(aliases)
+            if self._entity_resolver:
+                self._entity_resolver.update(
+                    ent_id, new_surface, existing_node.get("label", etype), new_desc
+                )
+            stats["entities_merged"] = stats.get("entities_merged", 0) + 1
+            stats["merges_id_collision_judge"] = stats.get("merges_id_collision_judge", 0) + 1
+            print(
+                f"[Resolver] id-collision merge (judge): "
+                f"'{name}' → '{new_surface}' [{etype}]"
+            )
+            return ent_id
+
+        if judge_result is not None:
+            # Judge said different — disambiguate with a numeric suffix so both
+            # entities live as separate nodes (e.g. two unrelated 'Janice's).
+            suffix = 2
+            unique_id = f"{ent_id}#{suffix}"
+            while self._g.has_node(unique_id):
+                suffix += 1
+                unique_id = f"{ent_id}#{suffix}"
+            self._g.add_node(
+                unique_id,
+                type="entity",
+                label=etype,
+                surface=name,
+                description=description or "",
+                n_mentions=1,
+                first_seen=_now_iso(),
+                last_seen=_now_iso(),
+                aliases=[],
+            )
+            stats["entities_added"] = stats.get("entities_added", 0) + 1
+            stats["disambiguated_id_collisions"] = stats.get("disambiguated_id_collisions", 0) + 1
+            if self._entity_resolver:
+                self._entity_resolver.add(unique_id, name, etype, description)
+            print(
+                f"[Resolver] id-collision split (judge said different): "
+                f"'{name}' → new node '{unique_id}' [{etype}]"
+            )
+            return unique_id
+
+        # Judge unavailable — fall back to the legacy description-merge so we
+        # don't lose data, but log so the situation is visible.
+        nd = self._g.nodes[ent_id]
+        nd["last_seen"] = _now_iso()
+        nd["n_mentions"] = nd.get("n_mentions", 0) + 1
+        existing = (nd.get("description") or "").strip()
+        new_desc = (description or "").strip()
+        if new_desc and new_desc not in existing:
+            nd["description"] = (
+                f"{existing} | {new_desc}" if existing else new_desc
+            )
+            stats["entities_updated"] = stats.get("entities_updated", 0) + 1
+            if self._entity_resolver:
+                self._entity_resolver.update(
+                    ent_id, nd.get("surface", name), nd.get("label", etype), nd["description"]
+                )
+        return ent_id
+
+    @staticmethod
+    def _merge_edge_attrs(target_attrs: Dict[str, Any], source_attrs: Dict[str, Any]) -> None:
+        """In-place merge of edge attribute dicts when rerouting edges.
+
+        - `facts` lists are concatenated (preserves all typed-fact entries).
+        - `n_dialogues` (KNOWS) and `count` (MENTIONS) are summed.
+        - Other attrs are kept from target if present, else copied from source.
+        """
+        if "facts" in source_attrs and source_attrs["facts"]:
+            target_attrs.setdefault("facts", []).extend(source_attrs["facts"])
+        if "n_dialogues" in source_attrs:
+            target_attrs["n_dialogues"] = (
+                target_attrs.get("n_dialogues", 0) + source_attrs["n_dialogues"]
+            )
+        if "count" in source_attrs:
+            target_attrs["count"] = (
+                target_attrs.get("count", 0) + source_attrs["count"]
+            )
+        for k, v in source_attrs.items():
+            if k in ("facts", "n_dialogues", "count"):
+                continue
+            target_attrs.setdefault(k, v)
+
+    def _merge_node(
+        self,
+        duplicate: str,
+        target: str,
+        canonical_name: str,
+        canonical_description: str,
+        stats: Dict[str, int],
+    ) -> None:
+        """Reroute every edge from `duplicate` onto `target`, then drop `duplicate`.
+
+        Used by the retrospective dedup pass — the eager path applies merges
+        directly in `_upsert_entity` without ever creating the duplicate node.
+        """
+        if duplicate == target or not self._g.has_node(duplicate):
+            return
+
+        dup_node = self._g.nodes[duplicate]
+        dup_surface = dup_node.get("surface", "")
+        dup_n_mentions = dup_node.get("n_mentions", 0)
+        dup_aliases = list(dup_node.get("aliases", []))
+
+        # Reroute in-edges
+        for u, _, attrs in list(self._g.in_edges(duplicate, data=True)):
+            if u == target:
+                continue
+            if self._g.has_edge(u, target):
+                self._merge_edge_attrs(self._g[u][target], attrs)
+            else:
+                self._g.add_edge(u, target, **attrs)
+
+        # Reroute out-edges
+        for _, v, attrs in list(self._g.out_edges(duplicate, data=True)):
+            if v == target:
+                continue
+            if self._g.has_edge(target, v):
+                self._merge_edge_attrs(self._g[target][v], attrs)
+            else:
+                self._g.add_edge(target, v, **attrs)
+
+        # Update target metadata
+        nd = self._g.nodes[target]
+        new_surface = canonical_name or nd.get("surface", "")
+        nd["surface"] = new_surface
+        nd["description"] = canonical_description or nd.get("description", "")
+        nd["last_seen"] = _now_iso()
+        nd["n_mentions"] = nd.get("n_mentions", 0) + dup_n_mentions
+        aliases = set(nd.get("aliases", []))
+        if dup_surface and dup_surface != new_surface:
+            aliases.add(dup_surface)
+        for a in dup_aliases:
+            if a and a != new_surface:
+                aliases.add(a)
+        nd["aliases"] = sorted(aliases)
+
+        # Drop the duplicate from the graph and Chroma
+        self._g.remove_node(duplicate)
+        if self._entity_resolver:
+            self._entity_resolver.delete(duplicate)
+            self._entity_resolver.update(
+                target, new_surface, nd.get("label", "UNKNOWN"), nd["description"]
+            )
+
+        stats["entities_merged"] = stats.get("entities_merged", 0) + 1
+
+    def dedupe_all_entities(self) -> Dict[str, int]:
+        """Retrospectively dedupe entity nodes already in the graph.
+
+        Walks entities from least- to most-mentioned and asks the resolver
+        whether each could merge into another existing entity. When the
+        resolver says yes, the lower-mention entity is merged into the higher.
+        This is a one-shot maintenance pass — typical use is after a bulk
+        ingest pre-dating the resolver, or after schema changes.
+        """
+        stats: Dict[str, int] = {
+            "candidates_examined": 0,
+            "entities_merged": 0,
+            "merges_cosine_high": 0,
+            "merges_llm_judge": 0,
+        }
+        if not (self._entity_resolver and self._entity_resolver.available):
+            print("[GraphService] dedupe_all_entities: resolver unavailable, no-op.")
+            return stats
+
+        entities = [
+            (nid, attrs)
+            for nid, attrs in self._g.nodes(data=True)
+            if attrs.get("type") == "entity"
+        ]
+        # Backfill Chroma from the graph in case entities predate the resolver
+        # (e.g. were created by an earlier ingest before this collection existed).
+        # `add` is idempotent (upsert), so this is safe even when the collection
+        # is already up to date.
+        for nid, attrs in entities:
+            self._entity_resolver.add(
+                nid,
+                attrs.get("surface", nid),
+                attrs.get("label", "UNKNOWN"),
+                attrs.get("description", ""),
+            )
+
+        # Process least-mentioned first so they get merged INTO higher-mention nodes.
+        entities.sort(key=lambda x: x[1].get("n_mentions", 0))
+
+        for nid, attrs in entities:
+            if not self._g.has_node(nid):
+                # already merged away in an earlier iteration
+                continue
+            stats["candidates_examined"] += 1
+            decision = self._entity_resolver.resolve(
+                name=attrs.get("surface", ""),
+                etype=attrs.get("label", "UNKNOWN"),
+                description=attrs.get("description", ""),
+                exclude_ids=[nid],
+            )
+            if not (
+                decision.is_duplicate
+                and decision.target_node_id
+                and self._g.has_node(decision.target_node_id)
+            ):
+                continue
+            target_surface = self._g.nodes[decision.target_node_id].get("surface", "")
+            self._merge_node(
+                duplicate=nid,
+                target=decision.target_node_id,
+                canonical_name=decision.canonical_name or attrs.get("surface", ""),
+                canonical_description=decision.canonical_description or attrs.get("description", ""),
+                stats=stats,
+            )
+            method_key = f"merges_{decision.method}" if decision.method else "merges_other"
+            stats[method_key] = stats.get(method_key, 0) + 1
+            print(
+                f"[Resolver:retro] merge ({decision.method}, score={decision.top_score:.3f}): "
+                f"'{attrs.get('surface', nid)}' → '{target_surface}' "
+                f"[{attrs.get('label', 'UNKNOWN')}]"
+            )
+
+        print(
+            f"[GraphService] dedupe_all_entities: examined {stats['candidates_examined']}, "
+            f"merged {stats['entities_merged']}."
+        )
+        return stats
+
+    def _resolve_to_node(
+        self,
+        name: str,
+        speaker_ids: set,
+    ) -> Optional[str]:
+        """Map an LLM-returned entity name to either a speaker node id or an
+        entity node id already present in the graph. Returns None if nothing
+        matches — caller should ignore that relation."""
+        if not name:
+            return None
+        lc = name.lower().strip()
+        for spk in speaker_ids:
+            if spk.lower() == lc:
+                return spk
+        # Otherwise look for an existing entity node by surface match
+        for nid, nd in self._g.nodes(data=True):
+            if nd.get("type") != "entity":
+                continue
+            if (nd.get("surface") or "").lower() == lc:
+                return nid
+        return None
+
+    def _add_fact(
+        self,
+        src: str,
+        tgt: str,
+        fact: Dict[str, Any],
+        dialogue_context: str = "",
+        stats: Optional[Dict[str, int]] = None,
+    ) -> None:
+        """Append a typed-fact dict to the edge between src and tgt.
+
+        Creates the edge with relation='FACT' if it doesn't exist. When the
+        edge already exists (e.g. a Speaker--KNOWS--Speaker structural edge),
+        the existing relation field is preserved and the fact is appended to
+        the edge's `facts` list.
+
+        Phase 3 — bi-temporal invalidation: before adding, scan all OUT-edges
+        from `src` for live (non-invalidated) facts with the same predicate
+        type. Ask the LLM judge whether the new fact contradicts each one;
+        when it does, set the old fact's `valid_to` to the new fact's
+        `extracted_at`. The old fact is preserved as history, not deleted.
+        """
+        if src == tgt:
+            return
+
+        # Invalidation pass — only when the LLM judge is wired up.
+        if self._llm_extractor and self._llm_extractor.available:
+            new_type = (fact.get("type") or "").upper()
+            new_fact_text = (fact.get("fact") or "").strip()
+            for _, other_tgt, attrs in list(self._g.out_edges(src, data=True)):
+                for old in attrs.get("facts", []) or []:
+                    if old.get("valid_to"):
+                        continue  # already invalidated
+                    if (old.get("type") or "").upper() != new_type:
+                        continue
+                    # Identical fact text — treat as same fact, no contradiction.
+                    if (old.get("fact") or "").strip() == new_fact_text and other_tgt == tgt:
+                        continue
+                    try:
+                        verdict = self._llm_extractor.judge_fact_contradiction(
+                            old_fact=old,
+                            new_fact=fact,
+                            dialogue_context=dialogue_context,
+                        )
+                    except Exception as e:
+                        print(f"[GraphService] contradiction judge failed: {e}")
+                        verdict = None
+                    if verdict and verdict.get("invalidates"):
+                        old["valid_to"] = fact.get("extracted_at") or _now_iso()
+                        old["invalidated_by"] = new_fact_text
+                        old["invalidation_reason"] = verdict.get("reason", "")
+                        if stats is not None:
+                            stats["facts_invalidated"] = stats.get("facts_invalidated", 0) + 1
+                        print(
+                            f"[Resolver] invalidated fact: '{self._display_name(src)} "
+                            f"{old.get('type', '')} {self._display_name(other_tgt)}' "
+                            f"superseded by '{new_fact_text}' "
+                            f"(reason: {verdict.get('reason', '')})"
+                        )
+
+        if self._g.has_edge(src, tgt):
+            ed = self._g[src][tgt]
+            ed.setdefault("facts", []).append(fact)
+        else:
+            self._g.add_edge(src, tgt, relation="FACT", facts=[fact])
+
     def extract_pending_entities(self) -> Dict[str, int]:
-        """Run LLM entity extraction for any utterances marked entities_pending.
+        """Two-pass LLM extraction over utterances marked entities_pending.
 
-        Utterances are grouped by dialogue_id (one LLM call per dialogue) so the
-        model sees full conversational context. Free-floating utterances with no
-        dialogue_id are batched together as a single pseudo-dialogue.
+        Pass 1 (Haiku, per dialogue): canonical entities with descriptions and
+        which utterances they appear in. Adds Entity nodes and Utterance--MENTIONS-->Entity edges.
+        Pass 2 (Sonnet, per dialogue, only when ≥2 candidate entities including
+        speakers): typed entity-entity relations. Adds typed-fact edges between
+        the two entity/speaker nodes.
 
-        Returns a small stats dict: {dialogues_processed, utterances_extracted,
-        entities_added, errors}.
+        Returns a stats dict: {dialogues_processed, utterances_extracted,
+        entities_added, entities_updated, relations_added, errors}.
         """
         stats = {
             "dialogues_processed": 0,
             "utterances_extracted": 0,
             "entities_added": 0,
+            "entities_updated": 0,
+            "entities_merged": 0,
+            "merges_cosine_high": 0,
+            "merges_llm_judge": 0,
+            "merges_id_collision_judge": 0,
+            "disambiguated_id_collisions": 0,
+            "relations_added": 0,
+            "facts_invalidated": 0,
             "errors": 0,
         }
         if not (self._llm_extractor and self._llm_extractor.available):
             return stats
+
+        # All speakers in the graph — used to route LLM-extracted PERSON entities
+        # to the existing speaker node rather than creating a duplicate
+        # ent::PERSON::<name> node. Computed once per pass so cross-dialogue
+        # speaker references resolve correctly.
+        all_speakers: set = {
+            nid for nid, attrs in self._g.nodes(data=True)
+            if attrs.get("type") == "speaker"
+        }
 
         # Bucket pending utterances by dialogue_id
         buckets: Dict[str, List[str]] = {}
@@ -541,8 +1082,12 @@ class GraphService:
             utterance_ids.sort(
                 key=lambda x: self._g.nodes[x].get("utterance_id", 0)
             )
-            payload = []
-            for uid in utterance_ids:
+
+            # Build dialogue payload, recording 1-indexed -> chroma_id
+            payload: List[Dict[str, Any]] = []
+            idx_to_chroma: Dict[int, str] = {}
+            speaker_set: set = set()
+            for i, uid in enumerate(utterance_ids, start=1):
                 ud = self._g.nodes[uid]
                 speaker = next(
                     (p for p in self._g.predecessors(uid)
@@ -553,40 +1098,146 @@ class GraphService:
                     "speaker": speaker.capitalize() if speaker else "Unknown",
                     "text": ud.get("text", ""),
                 })
+                idx_to_chroma[i] = uid
+                if speaker and speaker != "Unknown":
+                    speaker_set.add(speaker)
 
+            # --- Pass 1: entities ---
             try:
-                results = self._llm_extractor.extract_dialogue_entities(payload)
+                entities = self._llm_extractor.extract_dialogue_entities(payload)
             except Exception as e:
-                print(f"[GraphService] extraction failed for dialogue {dlg_id}: {e}")
+                print(f"[GraphService] entity extraction failed for dialogue {dlg_id}: {e}")
                 stats["errors"] += 1
+                # Even on failure, clear the pending flag so we don't loop forever
+                for uid in utterance_ids:
+                    self._g.nodes[uid].pop("entities_pending", None)
+                    stats["utterances_extracted"] += 1
                 continue
 
-            for uid, entities in zip(utterance_ids, results):
-                for ent_text, ent_label in entities:
-                    ent_id = f"ent::{ent_label}::{ent_text.lower()}"
-                    if not self._g.has_node(ent_id):
-                        self._g.add_node(
-                            ent_id,
-                            type="entity",
-                            label=ent_label,
-                            surface=ent_text,
-                        )
-                        stats["entities_added"] += 1
-                    if not self._g.has_edge(uid, ent_id):
+            # name -> node_id mapping for the relation pass.
+            # Speakers take priority over entity nodes when names collide
+            # (e.g. extracted entity "Joey" should map to speaker node `joey`).
+            name_to_node: Dict[str, str] = {}
+            for spk in all_speakers:
+                name_to_node[spk.lower()] = spk
+
+            # Dialogue-context string for the LLM judge (so it can disambiguate
+            # ambiguous cosine matches with grounded text). Cap at ~1500 chars
+            # to keep judge input small.
+            dialogue_context = "\n".join(
+                f"[{i}] {u.get('speaker', '')}: {u.get('text', '')}"
+                for i, u in enumerate(payload, start=1)
+            )[:1500]
+
+            for ent in entities:
+                ent_name = ent["name"]
+                ent_type = ent["type"]
+                # If this entity name matches a known speaker (any dialogue),
+                # route mentions to the speaker node rather than creating a
+                # duplicate ent::PERSON::<name> entity.
+                speaker_match = next(
+                    (s for s in all_speakers if s.lower() == ent_name.lower()),
+                    None,
+                )
+                if speaker_match and ent_type == "PERSON":
+                    target_node = speaker_match
+                else:
+                    target_node = self._upsert_entity(
+                        name=ent_name,
+                        etype=ent_type,
+                        description=ent["description"],
+                        stats=stats,
+                        dialogue_context=dialogue_context,
+                    )
+                # MENTIONS edges
+                for utt_idx in ent["mentioned_in"]:
+                    chroma_id = idx_to_chroma.get(utt_idx)
+                    if chroma_id and not self._g.has_edge(chroma_id, target_node):
                         self._g.add_edge(
-                            uid, ent_id, relation="MENTIONS", label=ent_label
+                            chroma_id, target_node, relation="MENTIONS", label=ent_type
                         )
-                # Clear the pending flag whether or not entities were found —
-                # an empty result is a valid answer ("no entities here").
+                name_to_node[ent_name.lower()] = target_node
+
+            # Clear entities_pending on every utterance now that pass 1 ran
+            for uid in utterance_ids:
                 self._g.nodes[uid].pop("entities_pending", None)
                 stats["utterances_extracted"] += 1
+
+            # --- Pass 2: relations (Sonnet) ---
+            relation_entity_list: List[Dict[str, Any]] = []
+            seen_lc: set = set()
+            for ent in entities:
+                key = ent["name"].lower()
+                if key in seen_lc:
+                    continue
+                seen_lc.add(key)
+                relation_entity_list.append({
+                    "name": ent["name"],
+                    "type": ent["type"],
+                    "description": ent["description"],
+                })
+            for spk in speaker_set:
+                if spk.lower() in seen_lc:
+                    continue
+                seen_lc.add(spk.lower())
+                relation_entity_list.append({
+                    "name": spk.capitalize(),
+                    "type": "PERSON",
+                    "description": "Speaker in this dialogue.",
+                })
+
+            if len(relation_entity_list) >= 2:
+                try:
+                    relations = self._llm_extractor.extract_relations(
+                        payload, relation_entity_list
+                    )
+                except Exception as e:
+                    print(f"[GraphService] relation extraction failed for dialogue {dlg_id}: {e}")
+                    stats["errors"] += 1
+                    relations = []
+
+                for rel in relations:
+                    src_node = name_to_node.get(rel["source"].lower())
+                    tgt_node = name_to_node.get(rel["target"].lower())
+                    if not src_node or not tgt_node or src_node == tgt_node:
+                        continue
+                    src_chromas = [
+                        idx_to_chroma[i] for i in rel["source_utterances"]
+                        if i in idx_to_chroma
+                    ]
+                    extracted_at = _now_iso()
+                    fact = {
+                        "type": rel["type"],
+                        "fact": rel["fact"],
+                        "source_utterances": src_chromas,
+                        "dialogue_id": str(dlg_id) if dlg_id != "_no_dialogue" else "",
+                        "extracted_at": extracted_at,
+                        "valid_from": extracted_at,
+                        "valid_to": None,
+                    }
+                    self._add_fact(
+                        src_node,
+                        tgt_node,
+                        fact,
+                        dialogue_context=dialogue_context,
+                        stats=stats,
+                    )
+                    stats["relations_added"] += 1
 
             stats["dialogues_processed"] += 1
 
         print(
             f"[GraphService] LLM extraction: {stats['dialogues_processed']} dialogues, "
             f"{stats['utterances_extracted']} utterances, "
-            f"{stats['entities_added']} new entity nodes, "
+            f"{stats['entities_added']} new entities, "
+            f"{stats['entities_merged']} merged "
+            f"(cosine={stats.get('merges_cosine_high', 0)}, "
+            f"llm={stats.get('merges_llm_judge', 0)}, "
+            f"id_collision={stats.get('merges_id_collision_judge', 0)}), "
+            f"{stats.get('disambiguated_id_collisions', 0)} id-collisions split, "
+            f"{stats['entities_updated']} desc-only updates, "
+            f"{stats['relations_added']} typed relations, "
+            f"{stats.get('facts_invalidated', 0)} facts invalidated, "
             f"{stats['errors']} errors."
         )
         return stats
@@ -679,9 +1330,12 @@ class GraphService:
                     "type": "entity",
                     "label": nd.get("label", "UNKNOWN"),
                     "surface": nd.get("surface", ent),
+                    "description": nd.get("description", ""),
                     "total_mentions": entity_total[ent],
                 }
             )
+
+        displayed_nodes: set = set(speakers) | top_entity_set
 
         # Build edge list
         edges: List[Dict[str, Any]] = []
@@ -709,6 +1363,22 @@ class GraphService:
                     edges.append(
                         {"source": spk, "target": ent, "relation": "MENTIONS", "count": cnt}
                     )
+
+        # Typed FACT edges — one viz-edge per fact so distinct relation types
+        # between the same pair render separately. Only include edges whose
+        # endpoints are already in the displayed node set.
+        for src, tgt, ed in g.edges(data=True):
+            if src not in displayed_nodes or tgt not in displayed_nodes:
+                continue
+            for fact in ed.get("facts", []) or []:
+                edges.append({
+                    "source": src,
+                    "target": tgt,
+                    "relation": fact.get("type", "FACT"),
+                    "fact": fact.get("fact", ""),
+                    "source_utterances": fact.get("source_utterances", []),
+                    "is_typed_fact": True,
+                })
 
         return {"stats": self.stats, "nodes": nodes, "edges": edges}
 

@@ -315,6 +315,25 @@ async def clear_llm_key():
     return rag_system.graph_service.set_llm_extractor(None)
 
 
+@app.post("/admin/dedupe_entities", tags=["Admin"])
+async def admin_dedupe_entities():
+    """Run a retrospective entity-resolution pass over the existing graph.
+
+    Walks every entity node from least- to most-mentioned and asks the resolver
+    whether each could merge into another existing entity. Useful after a bulk
+    ingest pre-dating the resolver, or for one-shot graph cleanup. Persists the
+    graph after the pass.
+    """
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+    try:
+        stats = rag_system.graph_service.dedupe_all_entities()
+        rag_system.graph_service.persist()
+        return {"status": "complete", **stats}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.get("/rag/graph_viz", tags=["RAG"])
 async def get_graph_viz(max_entities: int = 40):
     """Return a simplified speaker-entity bipartite graph for visualization.

@@ -283,14 +283,21 @@ def clear_llm_key_ui():
 # Knowledge Graph Visualization
 # ==========================================
 _ENTITY_COLORS = {
-    "PERSON":      "#2ecc71",
-    "ORG":         "#e67e22",
-    "GPE":         "#e74c3c",
-    "PRODUCT":     "#9b59b6",
-    "EVENT":       "#1abc9c",
-    "WORK_OF_ART": "#f39c12",
-    "FAC":         "#d35400",
-    "UNKNOWN":     "#95a5a6",
+    # New LLM-extractor types
+    "PERSON":       "#2ecc71",
+    "LOCATION":     "#e74c3c",
+    "ORGANIZATION": "#e67e22",
+    "EVENT":        "#1abc9c",
+    "OBJECT":       "#9b59b6",
+    "CONCEPT":      "#3498db",
+    "WORK":         "#f39c12",
+    # Legacy spaCy/regex types (kept for back-compat with old graphs)
+    "ORG":          "#e67e22",
+    "GPE":          "#e74c3c",
+    "PRODUCT":      "#9b59b6",
+    "WORK_OF_ART":  "#f39c12",
+    "FAC":          "#d35400",
+    "UNKNOWN":      "#95a5a6",
 }
 
 _EMPTY_GRAPH_HTML = """
@@ -362,8 +369,16 @@ def get_graph_viz(max_entities: int = 40):
                 ent_label   = n.get("label", "UNKNOWN")
                 surface     = n.get("surface", nid)
                 total_ment  = n.get("total_mentions", 1)
+                description = n.get("description", "")
                 color       = _ENTITY_COLORS.get(ent_label, "#95a5a6")
                 node_size   = min(10 + total_ment * 3, 30)
+                tooltip = (
+                    f"<b>{surface}</b><br>"
+                    f"Type: {ent_label}<br>"
+                    f"Total mentions: {total_ment}"
+                )
+                if description:
+                    tooltip += f"<br><i>{description[:300]}</i>"
                 net.add_node(
                     nid,
                     label=surface[:24],
@@ -371,16 +386,31 @@ def get_graph_viz(max_entities: int = 40):
                     color={"background": color, "border": color,
                            "highlight": {"background": color, "border": "#1e293b"}},
                     size=node_size,
-                    title=(
-                        f"<b>{surface}</b><br>"
-                        f"Type: {ent_label}<br>"
-                        f"Total mentions: {total_ment}"
-                    ),
+                    title=tooltip,
                     font={"size": 11},
                 )
 
         for e in edges:
-            if e["relation"] == "KNOWS":
+            if e.get("is_typed_fact"):
+                rel = e.get("relation", "FACT")
+                fact = e.get("fact", "")
+                src_utts = e.get("source_utterances", [])
+                tooltip = f"<b>{rel}</b>"
+                if fact:
+                    tooltip += f"<br>{fact}"
+                if src_utts:
+                    tooltip += f"<br><i>Supported by {len(src_utts)} utterance(s)</i>"
+                net.add_edge(
+                    e["source"], e["target"],
+                    label=rel,
+                    color={"color": "#7c3aed", "highlight": "#a78bfa"},
+                    font={"size": 10, "color": "#5b21b6", "strokeWidth": 2, "strokeColor": "#ffffff", "bold": True},
+                    width=2.5,
+                    title=tooltip,
+                    arrows={"to": {"enabled": True, "scaleFactor": 0.7}},
+                    dashes=False,
+                )
+            elif e["relation"] == "KNOWS":
                 n_dial = e.get("n_dialogues", 0)
                 net.add_edge(
                     e["source"], e["target"],
