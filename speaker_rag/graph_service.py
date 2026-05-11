@@ -174,10 +174,19 @@ class GraphService:
         chroma_id: str,
         text: str,
         metadata: Optional[Dict[str, Any]] = None,
+        mark_pending_extraction: bool = True,
     ) -> None:
         """Add a speaker, utterance, and its extracted entities to the graph.
 
         Does NOT auto-persist — call persist() explicitly after a batch.
+
+        mark_pending_extraction: when False, the utterance is added with all
+        structural edges (SAID/CONTAINS/HAS_PARTICIPANT/KNOWS) but is NOT
+        queued for LLM entity/relation extraction. Used for utterances we
+        want stored for retrieval but not parsed into KG facts — e.g.,
+        assistant messages in a chat enrollment, where the content is
+        usually a paraphrase of the FACT SHEET and would just re-extract
+        already-known entities.
         """
         if not text or not text.strip():
             return
@@ -211,7 +220,10 @@ class GraphService:
         # When an LLM extractor is wired up, defer extraction — we'll batch
         # per dialogue at persist time so the model sees full context.
         # Otherwise fall back to the inline regex/spaCy path.
-        if self._llm_extractor and self._llm_extractor.available:
+        # When mark_pending_extraction=False we skip extraction entirely.
+        if not mark_pending_extraction:
+            pass  # caller opted out of KG extraction for this utterance
+        elif self._llm_extractor and self._llm_extractor.available:
             self._g.nodes[chroma_id]["entities_pending"] = True
         else:
             for ent_text, ent_label in extract_entities(text):

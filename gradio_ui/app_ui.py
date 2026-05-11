@@ -169,6 +169,46 @@ def _format_history(history):
 def reset_history():
     return [], _format_history([])
 
+
+def save_chat_to_memory(history):
+    """Enroll the current chat history into the RAG memory layer.
+
+    The conversation_state holds {question, answer} pairs; we flatten them
+    into a {role, content} sequence so each side becomes its own utterance
+    in the graph + semantic store.
+    """
+    if not history:
+        return "No conversation to save yet — ask a question first."
+
+    messages = []
+    for turn in history:
+        q = (turn.get("question") or "").strip()
+        a = (turn.get("answer") or "").strip()
+        if q:
+            messages.append({"role": "user", "content": q})
+        if a:
+            messages.append({"role": "assistant", "content": a})
+
+    if not messages:
+        return "No conversation to save yet — ask a question first."
+
+    try:
+        response = requests.post(
+            f"{FASTAPI_URL}/rag/index_chat_session",
+            json={"messages": messages},
+            timeout=120,
+        )
+        if response.status_code == 200:
+            r = response.json()
+            return (
+                f"✅ Saved {r.get('enrolled_count', 0)} chat turns to memory "
+                f"({r.get('user_turns', 0)} user / {r.get('assistant_turns', 0)} assistant) "
+                f"as dialogue {r.get('dialogue_id', '?')}."
+            )
+        return f"Error {response.status_code}:\n{response.text}"
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
+
 def clear_rag():
     try:
         response = requests.delete(f"{FASTAPI_URL}/rag/clear")
@@ -782,7 +822,9 @@ with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
             "Ask a question with or without audio:\n"
             "- **With audio**: the backend identifies the speaker(s) and filters context by identity.\n"
             "- **Text only**: the backend scans the question for enrolled speaker names; if any match, it filters by them, otherwise it runs an unfiltered semantic search.\n\n"
-            "Prior Q/A turns are stored client-side and sent along with each new question so the LLM can resolve follow-up references. Use **Reset Memory** to start a fresh conversation."
+            "Prior Q/A turns are stored client-side and sent along with each new question so the LLM can resolve follow-up references. "
+            "Use **💾 Save to Memory** to enroll the current chat into the long-term store (semantic + KG, like an audio dialogue) — "
+            "future queries will then be able to retrieve from it. Use **Reset Memory** to clear the client-side history only."
         )
 
         conversation_state = gr.State([])
@@ -796,11 +838,13 @@ with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
                 )
                 with gr.Row():
                     rag_btn = gr.Button("Extract Context & Ask LLM", variant="primary")
+                    save_chat_btn = gr.Button("💾 Save to Memory", variant="secondary")
                     reset_btn = gr.Button("🧹 Reset Memory", variant="stop")
 
             with gr.Column():
                 rag_output = gr.Textbox(label="LLM Response", lines=6)
                 history_display = gr.Textbox(label="Conversation Memory", value="(no prior turns)", lines=8, interactive=False)
+                save_chat_status = gr.Textbox(label="Save to Memory Status", value="", lines=2, interactive=False)
                 with gr.Accordion("⚙️ View Backend Context (Debug)", open=False):
                     rag_context = gr.Textbox(label="RAG Fact Sheet (Returned by API)", lines=15)
 
@@ -808,6 +852,11 @@ with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
             fn=ask_rag,
             inputs=[rag_audio, rag_question, conversation_state],
             outputs=[rag_output, rag_context, conversation_state, history_display],
+        )
+        save_chat_btn.click(
+            fn=save_chat_to_memory,
+            inputs=[conversation_state],
+            outputs=save_chat_status,
         )
         reset_btn.click(
             fn=reset_history,

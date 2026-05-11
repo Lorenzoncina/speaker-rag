@@ -1,0 +1,281 @@
+{
+  "_about": "One example per subtype (16 total) for visualizing taxonomy variety. All examples drawn from train_sent_emo.csv and verified against the source rows.",
+
+  "questions": [
+
+    {
+      "id": "identity.direct_0000",
+      "q_type": "identity",
+      "subtype": "direct",
+      "answer_format": "mcq_single",
+      "question": "Who said: \"Hi. I need one fake ticket to Yemen.\"?",
+      "choices": ["Joey", "Ross", "Rachel", "Phoebe", "Monica", "Chandler"],
+      "ground_truth": "Chandler",
+      "_tests": "Speaker NER on question + semantic-match on quoted text against the speaker-filtered Chroma collection.",
+      "evidence": [
+        {"dialogue_id": 72, "utterance_id": 0, "speaker": "Chandler", "emotion": "neutral",
+         "utterance": "Okay. Then I guess its just, wait here then.   Hi. I need one fake ticket to Yemen."}
+      ]
+    },
+
+    {
+      "id": "identity.pair_attribution_0001",
+      "q_type": "identity",
+      "subtype": "pair_attribution",
+      "answer_format": "mcq_multi",
+      "question": "Across the enrolled conversations, two of the six main friends have referred to someone named 'Kathy'. Which two?",
+      "choices": ["Joey", "Ross", "Rachel", "Phoebe", "Monica", "Chandler"],
+      "ground_truth": ["Joey", "Chandler"],
+      "_tests": "Multi-speaker semantic retrieval — the system must NOT fall into the trap of guessing characters who never said this entity's name. Tests the $in operator on speaker filter and resistance to fabrication.",
+      "evidence": [
+        {"dialogue_id": 109, "utterance_id": 13, "speaker": "Chandler", "emotion": "neutral",
+         "utterance": "Ahh, come on! Yknow whatyknow what, I think Im just gonna go home and call Kathy."},
+        {"dialogue_id": 165, "utterance_id": 10, "speaker": "Joey", "emotion": "neutral",
+         "utterance": "No-no-no, I think Im gonna see how things go with Kathy. Shes pretty cool."}
+      ]
+    },
+
+    {
+      "id": "identity.cross_call_linking_0002",
+      "q_type": "identity",
+      "subtype": "cross_call_linking",
+      "answer_format": "mcq_single",
+      "question": "The speaker who in one conversation said \"How would you feel about taking out my assistant Tag? Ill pay.\" — is that the same speaker who in a different conversation said \"I dont know Tag! How can your genitals make phone calls?\"",
+      "choices": ["Yes, same speaker", "No, different speakers"],
+      "ground_truth": "Yes, same speaker",
+      "_tests": "Cross-call speaker linking — the union-find clustering path in _build_context_from_audio that merges identity across separately enrolled conversations.",
+      "evidence": [
+        {"dialogue_id": 130, "utterance_id": 8, "speaker": "Rachel", "emotion": "neutral",
+         "utterance": "How would you feel about taking out my assistant Tag? Ill pay."},
+        {"dialogue_id": 513, "utterance_id": 3, "speaker": "Rachel", "emotion": "anger",
+         "utterance": "I dont know Tag! How can your genitals make phone calls? Okay? Its not a perfect world! Just go please."}
+      ]
+    },
+
+    {
+      "id": "emotion.direct_attribution_0000",
+      "q_type": "emotion",
+      "subtype": "direct_attribution",
+      "answer_format": "mcq_single",
+      "question": "What emotion was Monica expressing when she said: \"Are you insane? I mean Joey, is going to kill you, hes actually going to kill you dead.\"?",
+      "choices": ["anger", "disgust", "fear", "joy", "neutral", "sadness", "surprise"],
+      "ground_truth": "surprise",
+      "_tests": "Retrieval of acoustic_emotion / text_emotion metadata from the matching segment. Uses 'surprise' to vary from v3's 'fear' example.",
+      "evidence": [
+        {"dialogue_id": 23, "utterance_id": 0, "speaker": "Monica", "emotion": "surprise",
+         "utterance": "Are you insane? I mean Joey, is going to kill you, hes actually going to kill you dead."}
+      ]
+    },
+
+    {
+      "id": "emotion.sarcasm_detection_0001",
+      "q_type": "emotion",
+      "subtype": "sarcasm_detection",
+      "answer_format": "mcq_single",
+      "question": "When Phoebe said \"Ohh, that's so nice! How great! Well, where? Where's the trip?!\", the surface words sound enthusiastic but her actual emotional state was something else. What was she really feeling?",
+      "choices": ["genuine joy", "anger / frustration", "surprise", "sadness"],
+      "ground_truth": "anger / frustration",
+      "_tests": "Acoustic vs text emotion DISAGREEMENT — uniquely available to an audio-grounded system. Text channel would say joy from the words; acoustic channel reveals anger. Distinct case from v3's Monica/'waving back'.",
+      "evidence": [
+        {"dialogue_id": 431, "utterance_id": 6, "speaker": "Phoebe", "emotion": "anger",
+         "utterance": "Ohh, that's so nice! How great! Well, where? Where's the trip?!"}
+      ]
+    },
+
+    {
+      "id": "emotion.trajectory_0002",
+      "q_type": "emotion",
+      "subtype": "trajectory",
+      "answer_format": "free_form",
+      "judge_rubric": "Award full credit if the answer captures the arc: Ross greets Rachel warmly (joy), small-talk through neutral turns, joy again at being proud of her interview, then SHIFTS to sadness as he apologises for being 'crazy and jealous', ending neutral. Half credit for mentioning at least the joy->sadness pivot. Zero if it says emotions were flat.",
+      "question": "In the conversation where Ross meets Rachel after her job interview, how does Ross's emotional state shift across his turns? Describe the arc.",
+      "ground_truth": "Ross opens in joy ('Hi!'), goes through several neutral small-talk turns, returns to joy when expressing pride about her interview ('Im so proud of you'), then pivots to sadness as he apologises for being 'crazy and jealous' and confesses he likes her a lot, ending on a neutral 'Yeah.'",
+      "_tests": "Multi-utterance retrieval ordered by utterance_id within one dialogue + per-turn emotion metadata. Different speaker arc from v3 (Monica's anger build-up).",
+      "evidence": [
+        {"dialogue_id": 4, "utterance_id": 1, "speaker": "Ross", "emotion": "joy", "utterance": "Hi!"},
+        {"dialogue_id": 4, "utterance_id": 9, "speaker": "Ross", "emotion": "joy", "utterance": "Im so proud of you."},
+        {"dialogue_id": 4, "utterance_id": 11, "speaker": "Ross", "emotion": "sadness",
+         "utterance": "Listen, Im ah, Im sorry Ive been so crazy and jealous and, its just that I like you a lot, so..."},
+        {"dialogue_id": 4, "utterance_id": 13, "speaker": "Ross", "emotion": "neutral", "utterance": "Yeah."}
+      ]
+    },
+
+    {
+      "id": "semantic_recall.open_summary_0000",
+      "q_type": "semantic_recall",
+      "subtype": "open_summary",
+      "answer_format": "free_form",
+      "judge_rubric": "Award full credit if the answer captures BOTH directions of Ross's arc with Emily: (a) the romantic affection / wanting to work things out, AND (b) the conflict / writing a nasty letter / desperate calling-after-her at the wedding fallout. Half credit for one direction only. Zero if Ross is not identified or Emily is described as a different relationship.",
+      "question": "Summarize what Ross has said about Emily across all the enrolled conversations.",
+      "ground_truth": "Ross talks about Emily across a range of emotional states: hopeful and loving ('tell Emily that I love her and that I cant imagine spending my life with anyone else'), trying to repair the relationship ('how I'm trying to work things out with Emily'), and anguished after their wedding falls apart ('I was up all night writing this really nasty letter to Emily', 'No, wait! Emily! No, wait, stop! Emily, please'). The thread is a strained marriage he's trying — and largely failing — to salvage.",
+      "_tests": "Filtered semantic search (speaker=Ross, topic=Emily) + multi-utterance synthesis across 7 dialogues. Different speaker-topic pair from v3 (Joey/Estelle).",
+      "evidence": [
+        {"dialogue_id": 794, "utterance_id": 6, "speaker": "Ross", "emotion": "anger",
+         "utterance": "Now just tell Emily that I love her and that I cant imagine spending my life with anyone else."},
+        {"dialogue_id": 961, "utterance_id": 6, "speaker": "Ross", "emotion": "sadness",
+         "utterance": "I was up all night writing this really nasty letter to Emily! It was perfect and now it's all covered in-in  Actually, thanks!"},
+        {"dialogue_id": 964, "utterance_id": 2, "speaker": "Ross", "emotion": "joy",
+         "utterance": "Well, y'know how I'm trying to work things out with Emily."},
+        {"dialogue_id": 996, "utterance_id": 20, "speaker": "Ross", "emotion": "sadness",
+         "utterance": "No, wait! Emily! No, wait, stop! Emily, please"}
+      ]
+    },
+
+    {
+      "id": "semantic_recall.quote_completion_0001",
+      "q_type": "semantic_recall",
+      "subtype": "quote_completion",
+      "answer_format": "fuzzy_match",
+      "question": "Complete this Ross quote from one of the enrolled conversations: \"Yeah, they think they can charge me for some dirty movie and a bag of ___, they got another think coming.\"",
+      "ground_truth": "Mashuga nuts",
+      "accept_variants": ["mashuga nuts", "meshuga nuts", "Mashuganuts"],
+      "_tests": "Precise lexical retrieval — semantic embeddings should rank the source utterance #1 and the LLM should read the exact missing tokens off it. 'Mashuga nuts' is distinctive enough that hallucinated alternatives are easy to spot.",
+      "evidence": [
+        {"dialogue_id": 38, "utterance_id": 6, "speaker": "Ross", "emotion": "anger",
+         "utterance": "Yeah, they think they can charge me for some dirty movie and a bag of Mashuga nuts, they got another think coming."}
+      ]
+    },
+
+    {
+      "id": "semantic_recall.stance_0002",
+      "q_type": "semantic_recall",
+      "subtype": "stance",
+      "answer_format": "mcq_single",
+      "question": "Based on everything Monica has said about Richard across the enrolled conversations, how would you characterise her overall stance toward him?",
+      "choices": [
+        "Consistently affectionate / positive",
+        "Consistently negative / dismissive",
+        "Mixed — affection coloured by lingering pain",
+        "Indifferent / neutral throughout"
+      ],
+      "ground_truth": "Mixed — affection coloured by lingering pain",
+      "_tests": "Stance aggregation: 6 utterances spread across joy ('Richard!', 'Richards living room, drinking wine'), surprise (recalling she only dated 'Richard and Julio'), anger, sadness ('I dont even wanna see Richard again'), and a turning-point neutral ('Im sick and tired of being depressed about Richard'). The right answer is mixed-with-affection.",
+      "evidence": [
+        {"dialogue_id": 53, "utterance_id": 1, "speaker": "Monica", "emotion": "joy", "utterance": "Richard!"},
+        {"dialogue_id": 122, "utterance_id": 0, "speaker": "Monica", "emotion": "surprise",
+         "utterance": "And y'know what, I just realised, in the last year Ive only gone out with two guys, Richard and Julio."},
+        {"dialogue_id": 356, "utterance_id": 16, "speaker": "Monica", "emotion": "neutral",
+         "utterance": "I'm sick and tired of being depressed about Richard."},
+        {"dialogue_id": 935, "utterance_id": 4, "speaker": "Monica", "emotion": "sadness",
+         "utterance": "This is crazy! I mean, it's such a stupid argument. I don't even wanna see Richard again."},
+        {"dialogue_id": 973, "utterance_id": 4, "speaker": "Monica", "emotion": "joy",
+         "utterance": "Richard's living room, drinking wine."}
+      ]
+    },
+
+    {
+      "id": "graph.co_speakers_0000",
+      "q_type": "graph",
+      "subtype": "co_speakers",
+      "answer_format": "mcq_multi",
+      "question": "In the conversation where Monica got angry and said she and Chandler had just switched apartments and the others' 'gravy train had ended', which other main friends were present?",
+      "choices": ["Joey", "Ross", "Rachel", "Phoebe", "Monica", "Chandler"],
+      "ground_truth": ["Joey", "Rachel", "Phoebe"],
+      "_tests": "graph_service co-speaker edges anchored by an emotion-rich utterance. Note: Chandler is actually NOT in this dialogue despite being part of the apartment swap — that's a useful trap.",
+      "evidence": [
+        {"dialogue_id": 58, "utterance_id": 4, "speaker": "Monica", "emotion": "anger",
+         "utterance": "Umm, excuse me, we switched apartments. You cant eat are food anymore, that-that gravy train had ended."},
+        {"dialogue_id": 58, "utterance_id": 0, "speaker": "Phoebe", "emotion": "neutral",
+         "utterance": "Personal shopping? What is that? Like where you walk around with snooty rich people and tell them what to buy?"},
+        {"dialogue_id": 58, "utterance_id": 1, "speaker": "Rachel", "emotion": "neutral", "utterance": "Uh-huh."},
+        {"dialogue_id": 58, "utterance_id": 5, "speaker": "Joey", "emotion": "surprise", "utterance": "Theres gravy?"}
+      ]
+    },
+
+    {
+      "id": "graph.entity_cross_speaker_0001",
+      "q_type": "graph",
+      "subtype": "entity_cross_speaker",
+      "answer_format": "mcq_multi",
+      "question": "Across the enrolled corpus, which of the six main friends have referred to 'Janice' by name in their own speech?",
+      "choices": ["Joey", "Ross", "Rachel", "Phoebe", "Monica", "Chandler"],
+      "ground_truth": ["Joey", "Ross", "Rachel", "Phoebe", "Chandler"],
+      "_tests": "Cross-speaker entity merging — the EntityResolver must merge Janice mentions from 5 different speakers into one canonical entity node. The single exclusion (Monica) is the hardest part of the answer; the system must not assume 'all main friends'.",
+      "evidence": [
+        {"dialogue_id": 109, "utterance_id": 18, "speaker": "Chandler", "emotion": "fear",
+         "utterance": "And then after that, Im gonna get so drunk, Im gonna wanna call Janice"},
+        {"dialogue_id": 166, "utterance_id": 2, "speaker": "Chandler", "emotion": "neutral", "utterance": "I just saw Janice."},
+        {"_note": "+ utterances from Joey, Ross, Rachel, Phoebe mentioning Janice — see CSV"}
+      ]
+    },
+
+    {
+      "id": "graph.relationship_inference_0002",
+      "q_type": "graph",
+      "subtype": "relationship_inference",
+      "answer_format": "free_form",
+      "judge_rubric": "Full credit if the answer identifies Tag as Rachel's ASSISTANT AT WORK, and ideally also notes the relationship became personal/romantic (per the joy + anger + sadness mix of mentions). Half credit if only one dimension (just professional, or just romantic) is captured. Zero if Tag is described as e.g. a friend, family member, or stranger.",
+      "question": "Based on the enrolled conversations, what is the relationship between Rachel and Tag?",
+      "ground_truth": "Tag is Rachel's assistant at her workplace ('How would you feel about taking out my assistant Tag?', 'Tag, I have a conference call today'). The other mentions reveal the relationship also became personal — Rachel speaks of him with joy when things are good, anger during a fight, and sadness around 'Tag is not the father'. So: Rachel's professional assistant whom she also dated.",
+      "_tests": "Entity description aggregation — the EntityResolver merges all Tag mentions into one node, and accumulated descriptions across 5 utterances should let the LLM infer the dual professional/romantic relationship.",
+      "evidence": [
+        {"dialogue_id": 130, "utterance_id": 8, "speaker": "Rachel", "emotion": "neutral",
+         "utterance": "How would you feel about taking out my assistant Tag? Ill pay."},
+        {"dialogue_id": 501, "utterance_id": 1, "speaker": "Rachel", "emotion": "joy",
+         "utterance": "Hi Tag! Hey, so did you have fun with uh, with Joey last night?"},
+        {"dialogue_id": 687, "utterance_id": 0, "speaker": "Rachel", "emotion": "neutral",
+         "utterance": "Hi. Tag, I have a conference call today is that correct?"},
+        {"dialogue_id": 806, "utterance_id": 8, "speaker": "Rachel", "emotion": "sadness",
+         "utterance": "Tag is not the father! And Joey knows now?"}
+      ]
+    },
+
+    {
+      "id": "aggregate.argmax_speaker_0000",
+      "q_type": "aggregate",
+      "subtype": "argmax_speaker",
+      "answer_format": "mcq_single",
+      "question": "Across the enrolled corpus, which of the six main friends expresses 'sadness' most often?",
+      "choices": ["Joey", "Ross", "Rachel", "Phoebe", "Monica", "Chandler"],
+      "ground_truth": "Rachel",
+      "_tests": "Metadata aggregation over the full enrolled set. Ground truth: Rachel 149, Phoebe 104, Ross 104, Monica 82, Joey 82, Chandler 66. Different emotion from v3 (fear).",
+      "evidence": [
+        {"_note": "Aggregation question — evidence is the corpus-wide count, not a single utterance."}
+      ]
+    },
+
+    {
+      "id": "aggregate.exact_count_0001",
+      "q_type": "aggregate",
+      "subtype": "exact_count",
+      "answer_format": "numeric",
+      "tolerance": 0,
+      "question": "How many times does Joey express 'anger' across all the enrolled conversations?",
+      "ground_truth": 169,
+      "_tests": "Exact integer aggregation over (speaker=Joey, emotion=anger). Different speaker/emotion pair from v3 (Monica/disgust=54).",
+      "evidence": []
+    },
+
+    {
+      "id": "aggregate.pairwise_comparison_0002",
+      "q_type": "aggregate",
+      "subtype": "pairwise_comparison",
+      "answer_format": "mcq_single",
+      "question": "Across the enrolled corpus, who expresses 'disgust' more often?",
+      "choices": ["Monica", "Chandler"],
+      "ground_truth": "Monica",
+      "_tests": "Pairwise count comparison — Monica 54 vs Chandler 45. Different pair and emotion from v3 (Joey vs Ross, anger).",
+      "evidence": []
+    },
+
+    {
+      "id": "aggregate.topic_emotion_correlation_0003",
+      "q_type": "aggregate",
+      "subtype": "topic_emotion_correlation",
+      "answer_format": "mcq_single",
+      "question": "When Joey talks about his agent Estelle across the enrolled conversations, what is his dominant emotion?",
+      "choices": ["anger", "disgust", "fear", "joy", "neutral", "sadness", "surprise"],
+      "ground_truth": "sadness",
+      "_tests": "JOINT filter: speaker=Joey + topic=Estelle + emotion-aggregate. Joey's 3 Estelle mentions are 2 sadness + 1 joy. Different (speaker, topic) pair from v3 (Ross/Carol).",
+      "evidence": [
+        {"dialogue_id": 12, "utterance_id": 1, "speaker": "Joey", "emotion": "joy",
+         "utterance": "Hey! So Estelle lined up a bunch of auditions for me tomorrow and Ill have my health insurance back in no time."},
+        {"dialogue_id": 856, "utterance_id": 2, "speaker": "Joey", "emotion": "sadness",
+         "utterance": "Estelle said I didn't get it."},
+        {"dialogue_id": 985, "utterance_id": 0, "speaker": "Joey", "emotion": "sadness",
+         "utterance": "Estelle, you gotta get me some work. I-I lost my health insurance."}
+      ]
+    }
+
+  ]
+}

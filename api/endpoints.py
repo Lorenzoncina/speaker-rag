@@ -155,6 +155,48 @@ async def rag_index_conversation(
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+class ChatMessage(BaseModel):
+    role: str  # 'user' or 'assistant'
+    content: str
+    timestamp: Optional[str] = None
+
+
+class IndexChatSessionRequest(BaseModel):
+    messages: List[ChatMessage]
+    session_id: Optional[str] = None
+    user_id: Optional[str] = "user"
+    assistant_id: Optional[str] = "assistant"
+
+
+@app.post("/rag/index_chat_session", tags=["RAG"])
+async def rag_index_chat_session(req: IndexChatSessionRequest):
+    """Enroll a chat session (user/LLM exchanges) into the memory layer.
+
+    Mirrors what audio enrollment does, but for text-only chat turns. Each
+    message becomes one utterance under a shared dialogue_id. User messages
+    get KG entity/relation extraction; assistant messages are stored for
+    semantic retrieval only.
+
+    Returns dialogue_id and per-role enrollment counts.
+    """
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+
+    if not req.messages:
+        return JSONResponse(status_code=400, content={"error": "messages is required"})
+
+    try:
+        result = rag_system.index_chat_session(
+            messages=[m.dict() for m in req.messages],
+            user_id=req.user_id or "user",
+            assistant_id=req.assistant_id or "assistant",
+            session_id=req.session_id,
+        )
+        return result
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.post("/rag/retrieve", tags=["RAG"])
 async def rag_retrieve_context(
     audios: Optional[List[UploadFile]] = File(None),

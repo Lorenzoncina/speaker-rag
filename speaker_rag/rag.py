@@ -333,6 +333,119 @@ class SpeakerRAG:
             "enrolled_segments": enrolled_count,
         }
 
+    def index_chat_session(
+        self,
+        messages: List[Dict[str, str]],
+        user_id: str = "user",
+        assistant_id: str = "assistant",
+        session_id: Optional[str] = None,
+    ) -> dict:
+        """Enroll a chat session (user/assistant exchanges) into the memory layer.
+
+        Mem0/Zep-style: chat turns become first-class enrollments so future
+        queries can retrieve from them just like from audio dialogues.
+
+        Each message is turned into one utterance:
+          - User messages   → speaker_id=user_id, KG entity/relation extraction enabled.
+          - Assistant messages → speaker_id=assistant_id, semantic search only
+            (KG extraction skipped: assistant responses paraphrase the FACT
+            SHEET and would re-extract already-known entities).
+
+        All messages share a single dialogue_id so the FACT SHEET's
+        'Reconstructed Conversation' branch can replay the full exchange at
+        query time.
+
+        Parameters:
+          messages: list of {"role": "user"|"assistant", "content": str,
+                            optional "timestamp": ISO string}
+          user_id, assistant_id: speaker IDs in the graph/semantic store.
+          session_id: optional dialogue_id. When omitted, a fresh UUID is
+                      assigned — each call creates a new dialogue.
+
+        Returns: {status, dialogue_id, enrolled_count, user_turns, assistant_turns}
+        """
+        if not messages:
+            return {
+                "status": "success",
+                "dialogue_id": None,
+                "enrolled_count": 0,
+                "user_turns": 0,
+                "assistant_turns": 0,
+                "message": "No messages provided.",
+            }
+
+        dialogue_id = session_id or f"chat_{uuid.uuid4().hex[:12]}"
+
+        sem_ids: List[str] = []
+        sem_docs: List[str] = []
+        sem_metas: List[Dict[str, Any]] = []
+
+        user_turns = 0
+        assistant_turns = 0
+
+        for idx, msg in enumerate(messages):
+            role = (msg.get("role") or "").strip().lower()
+            content = (msg.get("content") or "").strip()
+            if not content or role not in ("user", "assistant"):
+                continue
+
+            speaker_id = user_id if role == "user" else assistant_id
+            chroma_id = str(uuid.uuid4())
+
+            meta: Dict[str, Any] = {
+                "user_id": speaker_id,
+                "audio_file": "",
+                "data_type": "enroll",
+                "session_id": f"chat_{dialogue_id}",
+                "dialogue_id": dialogue_id,
+                "utterance_id": idx,
+                "transcription": content,
+                "text_emotion": "Unknown",
+                "acoustic_emotion": "Unknown",
+                "language": "en",
+                "source": "chat",
+                "role": role,
+            }
+            if "timestamp" in msg and msg["timestamp"]:
+                meta["timestamp"] = str(msg["timestamp"])
+
+            sem_ids.append(chroma_id)
+            sem_docs.append(content)
+            sem_metas.append(meta)
+
+            # User turns get KG extraction; assistant turns do not.
+            self.graph_service.index_utterance(
+                speaker_id=speaker_id,
+                chroma_id=chroma_id,
+                text=content,
+                metadata=meta,
+                mark_pending_extraction=(role == "user"),
+            )
+
+            if role == "user":
+                user_turns += 1
+            else:
+                assistant_turns += 1
+
+        if sem_ids:
+            self.semantic_service.index_transcriptions(sem_ids, sem_docs, sem_metas)
+
+        self.graph_service.persist()
+
+        print(
+            f"[Chat] Enrolled {len(sem_ids)} chat turns "
+            f"({user_turns} user, {assistant_turns} assistant) "
+            f"as dialogue {dialogue_id}."
+        )
+
+        return {
+            "status": "success",
+            "dialogue_id": dialogue_id,
+            "enrolled_count": len(sem_ids),
+            "user_turns": user_turns,
+            "assistant_turns": assistant_turns,
+        }
+
     def extract_speakers_from_question(self, question: str) -> List[str]:
         """Scans the question for mentions of enrolled user IDs (case-insensitive, whole-word match).
 
