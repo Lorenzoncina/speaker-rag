@@ -166,6 +166,7 @@ class IndexChatSessionRequest(BaseModel):
     session_id: Optional[str] = None
     user_id: Optional[str] = "user"
     assistant_id: Optional[str] = "assistant"
+    enable_kg_extraction: bool = True
 
 
 @app.post("/rag/index_chat_session", tags=["RAG"])
@@ -191,6 +192,7 @@ async def rag_index_chat_session(req: IndexChatSessionRequest):
             user_id=req.user_id or "user",
             assistant_id=req.assistant_id or "assistant",
             session_id=req.session_id,
+            enable_kg_extraction=req.enable_kg_extraction,
         )
         return result
     except Exception as e:
@@ -655,4 +657,174 @@ def admin_ingest_voxceleb(req: IngestVoxcelebRequest = IngestVoxcelebRequest()):
         "enrolled_count": success_count,
         "n_speakers": len(enrollment),
         "per_speaker": req.per_speaker,
+    }
+
+
+# ==========================================
+# LongMemEval benchmark
+# ==========================================
+from functools import lru_cache
+
+_LONGMEMEVAL_DIR = "/app/LongMemEval_data"
+_LONGMEMEVAL_SPLITS = {
+    "oracle":    "longmemeval_oracle.json",
+    "s_cleaned": "longmemeval_s_cleaned.json",
+    "m_cleaned": "longmemeval_m_cleaned.json",
+}
+
+
+@lru_cache(maxsize=4)
+def _load_longmemeval_split(split: str):
+    """Lazy-load and cache a LongMemEval split file."""
+    if split not in _LONGMEMEVAL_SPLITS:
+        raise ValueError(f"Unknown split '{split}'. Expected one of: {list(_LONGMEMEVAL_SPLITS)}")
+    path = os.path.join(_LONGMEMEVAL_DIR, _LONGMEMEVAL_SPLITS[split])
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Split file not found inside the container: {path}")
+    with open(path) as f:
+        return json.load(f)
+
+
+@app.get("/admin/longmemeval/splits", tags=["LongMemEval"])
+def admin_longmemeval_splits():
+    """Report which LongMemEval split files are available inside the container."""
+    out = []
+    for key, fname in _LONGMEMEVAL_SPLITS.items():
+        full = os.path.join(_LONGMEMEVAL_DIR, fname)
+        out.append({
+            "split": key,
+            "file": fname,
+            "exists": os.path.exists(full),
+        })
+    return {"dir": _LONGMEMEVAL_DIR, "splits": out}
+
+
+@app.get("/admin/longmemeval/questions", tags=["LongMemEval"])
+def admin_longmemeval_questions(split: str = "oracle", limit: int = -1):
+    """Return a compact list of question metadata for one LongMemEval split.
+
+    The benchmark runner in the UI iterates this list, calling /prepare and
+    /retrieve (or /haystack for the LLM-only baseline) for each question.
+    """
+    try:
+        data = _load_longmemeval_split(split)
+    except (ValueError, FileNotFoundError) as e:
+        return JSONResponse(status_code=404, content={"error": str(e)})
+
+    items = data if (limit is None or int(limit) <= 0) else data[: int(limit)]
+    out = []
+    for entry in items:
+        out.append({
+            "question_id":   entry.get("question_id", ""),
+            "question":      entry.get("question", ""),
+            "answer":        entry.get("answer", ""),
+            "question_type": entry.get("question_type", ""),
+            "question_date": entry.get("question_date", ""),
+            "n_sessions":    len(entry.get("haystack_sessions", [])),
+        })
+    return {"split": split, "count": len(out), "questions": out}
+
+
+class LongMemEvalPrepareRequest(BaseModel):
+    split: str
+    question_id: str
+    enable_kg: bool = True
+
+
+@app.post("/admin/longmemeval/prepare", tags=["LongMemEval"])
+def admin_longmemeval_prepare(req: LongMemEvalPrepareRequest):
+    """Clear the database and enroll the haystack of a single LongMemEval question.
+
+    Each session in `haystack_sessions` becomes one chat dialogue, indexed via
+    `index_chat_session`. The timestamp from `haystack_dates[i]` is attached
+    to every message in that session so the retrieval/KG layers can use it.
+
+    When `enable_kg=False`, the LLM entity/relation extraction is skipped
+    (semantic retrieval still works) — useful for fast iteration on the
+    larger splits.
+    """
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+
+    try:
+        data = _load_longmemeval_split(req.split)
+    except (ValueError, FileNotFoundError) as e:
+        return JSONResponse(status_code=404, content={"error": str(e)})
+
+    entry = next((d for d in data if d.get("question_id") == req.question_id), None)
+    if not entry:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"question_id '{req.question_id}' not found in split '{req.split}'"},
+        )
+
+    # Fresh memory per instance — the benchmark requires per-question isolation.
+    rag_system.clear_database()
+
+    haystack_sessions    = entry.get("haystack_sessions", []) or []
+    haystack_dates       = entry.get("haystack_dates", []) or []
+    haystack_session_ids = entry.get("haystack_session_ids", []) or []
+
+    total_turns = 0
+    for i, session in enumerate(haystack_sessions):
+        ts = haystack_dates[i] if i < len(haystack_dates) else None
+        messages = []
+        for msg in session:
+            role = (msg.get("role") or "").strip().lower()
+            content = (msg.get("content") or "").strip()
+            if not content or role not in ("user", "assistant"):
+                continue
+            messages.append({"role": role, "content": content, "timestamp": ts})
+
+        if not messages:
+            continue
+
+        sess_id = haystack_session_ids[i] if i < len(haystack_session_ids) else f"sess_{i}"
+        result = rag_system.index_chat_session(
+            messages=messages,
+            user_id="user",
+            assistant_id="assistant",
+            session_id=str(sess_id),
+            enable_kg_extraction=req.enable_kg,
+        )
+        total_turns += result.get("enrolled_count", 0)
+
+    return {
+        "status": "success",
+        "split": req.split,
+        "question_id": req.question_id,
+        "n_sessions_enrolled": len(haystack_sessions),
+        "n_turns_enrolled": total_turns,
+        "enable_kg": req.enable_kg,
+    }
+
+
+@app.get("/admin/longmemeval/haystack", tags=["LongMemEval"])
+def admin_longmemeval_haystack(split: str, question_id: str):
+    """Return the full haystack for one question — used by the LLM-only baseline.
+
+    Returns the raw sessions and dates so the UI can flatten them into a
+    single context blob and feed Qwen directly (no RAG retrieval involved).
+    """
+    try:
+        data = _load_longmemeval_split(split)
+    except (ValueError, FileNotFoundError) as e:
+        return JSONResponse(status_code=404, content={"error": str(e)})
+
+    entry = next((d for d in data if d.get("question_id") == question_id), None)
+    if not entry:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"question_id '{question_id}' not found in split '{split}'"},
+        )
+
+    return {
+        "split":             split,
+        "question_id":       question_id,
+        "question":          entry.get("question", ""),
+        "answer":            entry.get("answer", ""),
+        "question_type":     entry.get("question_type", ""),
+        "question_date":     entry.get("question_date", ""),
+        "haystack_dates":    entry.get("haystack_dates", []),
+        "haystack_sessions": entry.get("haystack_sessions", []),
     }

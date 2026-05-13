@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+from datetime import datetime
 from pathlib import Path
 import gradio as gr
 import requests
@@ -28,6 +29,7 @@ from tests.eval_speaker_verification import (
 # --- Configuration ---
 FASTAPI_URL = "http://127.0.0.1:8006" # fbk server (requires SSH Port Forwarding)
 EVAL_RESULTS_DIR = str(Path(__file__).resolve().parent.parent / "tests" / "eval_results")
+LONGMEMEVAL_RESULTS_DIR = str(Path(__file__).resolve().parent.parent / "tests" / "longmemeval_results")
 
 # ==========================================
 # 🧠 "Bring Your Own LLM" Initialization
@@ -650,6 +652,244 @@ def run_vox1_exp3(n_pairs, regenerate, progress=gr.Progress()):
 
 
 # ==========================================
+# LongMemEval benchmark
+# ==========================================
+def _qwen_answer(prompt: str, max_new_tokens: int = 300) -> str:
+    """Run the UI's Qwen pipeline on a single prompt and return the generated answer."""
+    messages = [
+        {"role": "system", "content": "You are a helpful and precise analytical assistant."},
+        {"role": "user", "content": prompt},
+    ]
+    formatted = llm_pipeline.tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    outputs = llm_pipeline(formatted, max_new_tokens=max_new_tokens, temperature=0.1)
+    return outputs[0]["generated_text"][len(formatted):].strip()
+
+
+# Adapted from LongMemEval paper Appendix D (Figure 13, non-CoN prompt).
+_LME_LLM_ONLY_PROMPT = """I will give you several history chats between you and a user. \
+Please answer the question based on the relevant chat history.
+
+History Chats:
+{chat_history}
+
+Current Date: {question_date}
+
+Question: {question}
+
+Answer:"""
+
+
+def _flatten_haystack(haystack_sessions, haystack_dates, max_chars: int = 80000) -> str:
+    """Flatten the haystack into a single text blob, truncating from the end if too long.
+
+    Qwen2-7B-Instruct has a ~32k token context window (~96k chars). We cap at
+    80k chars to leave room for the prompt scaffolding and answer. The full
+    `s_cleaned` haystack averages ~115k tokens and will be truncated; the
+    `oracle` split typically fits without truncation.
+    """
+    lines = []
+    for i, session in enumerate(haystack_sessions):
+        date = haystack_dates[i] if i < len(haystack_dates) else "?"
+        lines.append(f"=== Session {i + 1} ({date}) ===")
+        for msg in session:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            lines.append(f"{role}: {content}")
+        lines.append("")
+    full = "\n".join(lines)
+    if len(full) > max_chars:
+        full = full[:max_chars] + "\n\n[...truncated due to context limit...]"
+    return full
+
+
+def _lme_questions(split: str, n_questions: int):
+    """Fetch the question list for a split. Raises on HTTP error."""
+    r = requests.get(
+        f"{FASTAPI_URL}/admin/longmemeval/questions",
+        params={"split": split, "limit": int(n_questions)},
+        timeout=120,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"Failed to fetch questions: {r.status_code} {r.text}")
+    return r.json().get("questions", [])
+
+
+def _lme_open_output(mode_tag: str, split: str):
+    """Create the results directory and return (output_path, file_handle) for incremental writes."""
+    os.makedirs(LONGMEMEVAL_RESULTS_DIR, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = Path(LONGMEMEVAL_RESULTS_DIR) / f"longmemeval_{mode_tag}_{split}_{stamp}.jsonl"
+    return path, open(path, "w")
+
+
+def run_longmemeval_rag(split, n_questions, enable_kg, progress=gr.Progress()):
+    """Run the benchmark with SpeakerRAG: per-question clear + enroll + retrieve, then Qwen."""
+    try:
+        questions = _lme_questions(split, n_questions)
+    except Exception as e:
+        return f"Failed to load split: {e}"
+
+    total = len(questions)
+    if total == 0:
+        return f"No questions found in split '{split}'."
+
+    out_path, out_f = _lme_open_output("rag", split)
+    log = [
+        f"Running LongMemEval (RAG mode) on '{split}' — {total} questions",
+        f"  KG extraction during enrollment: {'ON' if enable_kg else 'OFF'}",
+        f"  Output: {out_path}",
+        "",
+    ]
+
+    try:
+        for i, q in enumerate(questions):
+            progress(i / total, desc=f"[{i + 1}/{total}] {q['question_type']}")
+
+            # 1. clear DB + enroll this question's haystack
+            try:
+                prep = requests.post(
+                    f"{FASTAPI_URL}/admin/longmemeval/prepare",
+                    json={
+                        "split": split,
+                        "question_id": q["question_id"],
+                        "enable_kg": bool(enable_kg),
+                    },
+                    timeout=3600,
+                )
+            except Exception as e:
+                log.append(f"[{i + 1}/{total}] PREP exception: {e}")
+                continue
+            if prep.status_code != 200:
+                log.append(f"[{i + 1}/{total}] PREP {prep.status_code}: {prep.text[:200]}")
+                continue
+
+            # 2. build context for the question
+            try:
+                ret = requests.post(
+                    f"{FASTAPI_URL}/rag/retrieve",
+                    data={"question": q["question"]},
+                    timeout=180,
+                )
+            except Exception as e:
+                log.append(f"[{i + 1}/{total}] RETRIEVE exception: {e}")
+                continue
+            if ret.status_code != 200:
+                log.append(f"[{i + 1}/{total}] RETRIEVE {ret.status_code}: {ret.text[:200]}")
+                continue
+
+            prompt = ret.json().get("recommended_prompt", "")
+            if not prompt:
+                log.append(f"[{i + 1}/{total}] empty recommended_prompt")
+                continue
+
+            # 3. run Qwen on the prompt
+            try:
+                hypothesis = _qwen_answer(prompt, max_new_tokens=300)
+            except Exception as e:
+                log.append(f"[{i + 1}/{total}] QWEN exception: {e}")
+                continue
+
+            # 4. append result
+            out_f.write(json.dumps({
+                "question_id":   q["question_id"],
+                "hypothesis":    hypothesis,
+                "question":      q["question"],
+                "answer":        q["answer"],
+                "question_type": q["question_type"],
+                "question_date": q.get("question_date", ""),
+            }) + "\n")
+            out_f.flush()
+
+            log.append(
+                f"[{i + 1}/{total}] {q['question_type']} | "
+                f"hyp: {hypothesis[:80].replace(chr(10), ' ')}"
+            )
+    finally:
+        out_f.close()
+
+    log.append("")
+    log.append(f"Done. Results saved to {out_path}")
+    return "\n".join(log)
+
+
+def run_longmemeval_llm_only(split, n_questions, progress=gr.Progress()):
+    """Run the benchmark with Qwen alone: full haystack stuffed into the prompt, no RAG."""
+    try:
+        questions = _lme_questions(split, n_questions)
+    except Exception as e:
+        return f"Failed to load split: {e}"
+
+    total = len(questions)
+    if total == 0:
+        return f"No questions found in split '{split}'."
+
+    out_path, out_f = _lme_open_output("llm_only", split)
+    log = [
+        f"Running LongMemEval (LLM-only baseline) on '{split}' — {total} questions",
+        f"  Qwen2-7B-Instruct context: ~32k tokens; haystack truncated to ~80k chars.",
+        f"  Output: {out_path}",
+        "",
+    ]
+
+    try:
+        for i, q in enumerate(questions):
+            progress(i / total, desc=f"[{i + 1}/{total}] {q['question_type']}")
+
+            try:
+                hs = requests.get(
+                    f"{FASTAPI_URL}/admin/longmemeval/haystack",
+                    params={"split": split, "question_id": q["question_id"]},
+                    timeout=180,
+                )
+            except Exception as e:
+                log.append(f"[{i + 1}/{total}] HAYSTACK exception: {e}")
+                continue
+            if hs.status_code != 200:
+                log.append(f"[{i + 1}/{total}] HAYSTACK {hs.status_code}: {hs.text[:200]}")
+                continue
+
+            data = hs.json()
+            chat_history = _flatten_haystack(
+                data.get("haystack_sessions", []),
+                data.get("haystack_dates", []),
+            )
+            prompt = _LME_LLM_ONLY_PROMPT.format(
+                chat_history=chat_history,
+                question_date=q.get("question_date", "unknown"),
+                question=q["question"],
+            )
+
+            try:
+                hypothesis = _qwen_answer(prompt, max_new_tokens=300)
+            except Exception as e:
+                log.append(f"[{i + 1}/{total}] QWEN exception: {e}")
+                continue
+
+            out_f.write(json.dumps({
+                "question_id":   q["question_id"],
+                "hypothesis":    hypothesis,
+                "question":      q["question"],
+                "answer":        q["answer"],
+                "question_type": q["question_type"],
+                "question_date": q.get("question_date", ""),
+            }) + "\n")
+            out_f.flush()
+
+            log.append(
+                f"[{i + 1}/{total}] {q['question_type']} | "
+                f"hyp: {hypothesis[:80].replace(chr(10), ' ')}"
+            )
+    finally:
+        out_f.close()
+
+    log.append("")
+    log.append(f"Done. Results saved to {out_path}")
+    return "\n".join(log)
+
+
+# ==========================================
 # Gradio UI Layout
 # ==========================================
 with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
@@ -934,6 +1174,61 @@ with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
         vox1_exp3_btn.click(fn=run_vox1_exp3,
                             inputs=[vox1_eval_n_pairs, gr.State(False)],
                             outputs=vox1_eval_output)
+
+    with gr.Accordion("📊 Step 5: LongMemEval Benchmark", open=False):
+        gr.Markdown(
+            "Evaluate the long-term-memory pipeline on the **LongMemEval** benchmark "
+            "(Wu et al., ICLR 2025). For each instance, the runner clears the database, "
+            "enrolls the question's `haystack_sessions`, retrieves context, and asks Qwen the question. "
+            "Results are written as a JSONL file compatible with the official `evaluate_qa.py`.\n\n"
+            "**Modes:**\n"
+            "- **Run with SpeakerRAG** — full pipeline: clear DB → enroll haystack → RAG-built context → Qwen.\n"
+            "- **Run LLM-only baseline** — Qwen with the full haystack stuffed into the prompt, no RAG. "
+            "Note: Qwen2-7B-Instruct has ~32k token context, so the `s_cleaned` and `m_cleaned` "
+            "splits will be truncated; `oracle` typically fits.\n\n"
+            "**KG extraction toggle** — when ON, every enrolled session goes through Haiku entity / "
+            "Sonnet relation extraction (slow but exercises the full system). Turn OFF for a fast "
+            "semantic-retrieval-only run.\n\n"
+            "Results are saved under `tests/longmemeval_results/`. Copy the JSONL out of the container "
+            "and run, in your local conda env:\n"
+            "```\n"
+            "python3 evaluate_qa.py gpt-4o longmemeval_<mode>_<split>_<timestamp>.jsonl "
+            "../../data/longmemeval_oracle.json\n"
+            "```"
+        )
+
+        with gr.Row():
+            lme_split = gr.Dropdown(
+                label="Split",
+                choices=["oracle", "s_cleaned", "m_cleaned"],
+                value="oracle",
+                scale=2,
+            )
+            lme_n_questions = gr.Number(
+                label="Number of questions (-1 = all)",
+                value=20, precision=0, scale=1,
+            )
+            lme_enable_kg = gr.Checkbox(
+                label="Enable KG extraction during enrollment",
+                value=True, scale=1,
+            )
+
+        with gr.Row():
+            lme_rag_btn = gr.Button("Run with SpeakerRAG", variant="primary")
+            lme_baseline_btn = gr.Button("Run LLM-only baseline", variant="secondary")
+
+        lme_output = gr.Textbox(label="Benchmark Progress / Log", lines=20)
+
+        lme_rag_btn.click(
+            fn=run_longmemeval_rag,
+            inputs=[lme_split, lme_n_questions, lme_enable_kg],
+            outputs=lme_output,
+        )
+        lme_baseline_btn.click(
+            fn=run_longmemeval_llm_only,
+            inputs=[lme_split, lme_n_questions],
+            outputs=lme_output,
+        )
 
 
 if __name__ == "__main__":

@@ -339,6 +339,7 @@ class SpeakerRAG:
         user_id: str = "user",
         assistant_id: str = "assistant",
         session_id: Optional[str] = None,
+        enable_kg_extraction: bool = True,
     ) -> dict:
         """Enroll a chat session (user/assistant exchanges) into the memory layer.
 
@@ -361,6 +362,10 @@ class SpeakerRAG:
           user_id, assistant_id: speaker IDs in the graph/semantic store.
           session_id: optional dialogue_id. When omitted, a fresh UUID is
                       assigned — each call creates a new dialogue.
+          enable_kg_extraction: when False, no LLM entity/relation extraction
+                      is run on this session (semantic embeddings + utterance
+                      nodes still stored). Useful for batch benchmarks where
+                      KG construction would be too slow.
 
         Returns: {status, dialogue_id, enrolled_count, user_turns, assistant_turns}
         """
@@ -414,12 +419,14 @@ class SpeakerRAG:
             sem_metas.append(meta)
 
             # User turns get KG extraction; assistant turns do not.
+            # enable_kg_extraction=False globally disables it (benchmark mode).
+            mark_pending = enable_kg_extraction and (role == "user")
             self.graph_service.index_utterance(
                 speaker_id=speaker_id,
                 chroma_id=chroma_id,
                 text=content,
                 metadata=meta,
-                mark_pending_extraction=(role == "user"),
+                mark_pending_extraction=mark_pending,
             )
 
             if role == "user":
