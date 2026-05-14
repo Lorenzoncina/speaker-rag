@@ -34,15 +34,46 @@ LONGMEMEVAL_RESULTS_DIR = str(Path(__file__).resolve().parent.parent / "tests" /
 # ==========================================
 # 🧠 "Bring Your Own LLM" Initialization
 # ==========================================
-print("Loading Local Text LLM for the UI...")
-# You can swap this out for ANY text model (Llama-3, Mistral, etc.) or an OpenAI API call!
-llm_pipeline = pipeline(
-    "text-generation", 
-    model="Qwen/Qwen2-7B-Instruct", # OR "meta-llama/Meta-Llama-3-8B-Instruct"
-    device_map="auto",
-    torch_dtype=torch.float16
-)
-print("UI LLM Loaded successfully.")
+# Qwen2-7B is the UI-side demo answerer used when KG extraction runs against
+# the Claude API. It is loaded LAZILY (on first answer call) so the container
+# doesn't waste ~14 GB of VRAM at startup when the user only wants to run a
+# benchmark in Local mode (where Qwen3-14B on the backend handles answering).
+# When the user switches the backend to Local mode, this stays unloaded — and
+# if it was already loaded, the UI mode-switch handler unloads it explicitly
+# so the GPU has room for Qwen3-14B on the backend container.
+_ui_llm_cache: dict = {"pipeline": None}
+
+
+def get_ui_llm():
+    """Lazy-load Qwen/Qwen2-7B-Instruct on first use."""
+    if _ui_llm_cache["pipeline"] is None:
+        print("Loading Local Text LLM for the UI (Qwen/Qwen2-7B-Instruct)...")
+        _ui_llm_cache["pipeline"] = pipeline(
+            "text-generation",
+            model="Qwen/Qwen2-7B-Instruct",
+            device_map="auto",
+            torch_dtype=torch.float16,
+        )
+        print("UI LLM Loaded successfully.")
+    return _ui_llm_cache["pipeline"]
+
+
+def unload_ui_llm() -> str:
+    """Drop the Qwen2-7B pipeline and free its VRAM. Used when switching to
+    Local mode so Qwen3-14B on the backend has room to load."""
+    import gc
+    if _ui_llm_cache["pipeline"] is None:
+        return "Qwen2-7B was not loaded — nothing to free."
+    try:
+        pipe = _ui_llm_cache["pipeline"]
+        _ui_llm_cache["pipeline"] = None
+        del pipe
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        return "Qwen2-7B unloaded from UI container."
+    except Exception as e:
+        return f"Failed to unload Qwen2-7B: {e}"
 
 # ==========================================
 # Lazy loader for Qwen2-Audio (only used by Experiment 1)
@@ -108,6 +139,58 @@ def list_enrolled_users():
     except Exception as e:
         return f"An error occurred: {str(e)}"
 
+def _backend_extractor_mode() -> str:
+    """Return the backend's current extractor mode ('anthropic' / 'local' / 'off').
+
+    Falls back to 'off' if the backend is unreachable so the UI doesn't hang on
+    a misconfigured environment.
+    """
+    try:
+        r = requests.get(f"{FASTAPI_URL}/admin/extractor_mode", timeout=5)
+        if r.status_code == 200:
+            return str(r.json().get("mode", "off")).lower()
+    except Exception:
+        pass
+    return "off"
+
+
+def _answer_with_backend_local(prompt: str, max_new_tokens: int = 300) -> str:
+    """Run the fact-sheet prompt through the backend's loaded Qwen3-14B."""
+    r = requests.post(
+        f"{FASTAPI_URL}/llm/generate",
+        json={"prompt": prompt, "max_new_tokens": int(max_new_tokens)},
+        timeout=600,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"backend /llm/generate {r.status_code}: {r.text[:200]}")
+    return (r.json().get("text") or "").strip()
+
+
+def _answer_with_ui_qwen(prompt: str, max_new_tokens: int = 300) -> str:
+    """Run the fact-sheet prompt through the UI-side Qwen2-7B (lazy-loaded)."""
+    pipe = get_ui_llm()
+    messages = [
+        {"role": "system", "content": "You are a helpful and precise analytical assistant."},
+        {"role": "user", "content": prompt},
+    ]
+    formatted = pipe.tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    outputs = pipe(formatted, max_new_tokens=max_new_tokens, temperature=0.1)
+    return outputs[0]["generated_text"][len(formatted):].strip()
+
+
+def answer_with_llm(prompt: str, max_new_tokens: int = 300) -> str:
+    """Route fact-sheet answering to the right model based on backend mode.
+
+    - Backend mode == 'local': call the backend's Qwen3-14B (one model loaded).
+    - Backend mode != 'local': use the UI's Qwen2-7B (decoupled answerer).
+    """
+    if _backend_extractor_mode() == "local":
+        return _answer_with_backend_local(prompt, max_new_tokens=max_new_tokens)
+    return _answer_with_ui_qwen(prompt, max_new_tokens=max_new_tokens)
+
+
 def ask_rag(audio_paths, question, history):
     history = history or []
 
@@ -134,17 +217,7 @@ def ask_rag(audio_paths, question, history):
             if not recommended_prompt:
                 return "Error: Backend did not return a prompt.", fact_sheet, history, _format_history(history)
 
-            messages = [
-                {"role": "system", "content": "You are a helpful and precise analytical assistant."},
-                {"role": "user", "content": recommended_prompt}
-            ]
-
-            formatted_prompt = llm_pipeline.tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-
-            outputs = llm_pipeline(formatted_prompt, max_new_tokens=300, temperature=0.1)
-            final_answer = outputs[0]["generated_text"][len(formatted_prompt):].strip()
+            final_answer = answer_with_llm(recommended_prompt, max_new_tokens=300)
 
             new_history = history + [{"question": question, "answer": final_answer}]
             return final_answer, fact_sheet, new_history, _format_history(new_history)
@@ -270,55 +343,98 @@ def ingest_voxceleb_ui(per_speaker: int = 10):
         return f"An error occurred: {str(e)}"
 
 # ==========================================
-# Anthropic API key management (LLM-backed entity extraction)
+# Extractor-mode management (Claude API vs local Qwen3-14B)
 # ==========================================
-def _format_llm_status(status: dict) -> str:
+def _format_mode_status(status: dict) -> str:
+    """Render a backend mode/status payload as a single human-readable line."""
     if not isinstance(status, dict):
         return "Unknown status."
-    if status.get("enabled"):
-        return f"✅ LLM extraction enabled — model: {status.get('model', 'unknown')}"
-    return f"⚠️ LLM extraction disabled — {status.get('reason', 'unknown reason')}"
+    mode = str(status.get("mode", "off")).lower()
+    enabled = bool(status.get("enabled"))
+    model = status.get("model") or "unknown"
+    reason = status.get("reason") or "unknown reason"
+    if mode == "anthropic" and enabled:
+        return f"✅ Claude API mode — KG model: {model}.  Answers: UI Qwen2-7B."
+    if mode == "local" and enabled:
+        return f"✅ Local Qwen3-14B mode (8-bit) — KG model: {model}.  Answers: backend Qwen3-14B."
+    if mode == "anthropic" and not enabled:
+        return f"⚠️ Claude API mode selected but extractor disabled — {reason}"
+    if mode == "local" and not enabled:
+        return f"⚠️ Local mode selected but model failed to load — {reason}"
+    return f"⚠️ Extractor disabled — {reason}"
 
 
-def get_llm_status_ui() -> str:
+def get_mode_status_ui() -> str:
     try:
-        r = requests.get(f"{FASTAPI_URL}/admin/llm_key", timeout=5)
+        r = requests.get(f"{FASTAPI_URL}/admin/extractor_mode", timeout=5)
         if r.status_code != 200:
             return f"Error {r.status_code}: {r.text}"
-        return _format_llm_status(r.json())
+        return _format_mode_status(r.json())
     except Exception as e:
         return f"An error occurred: {e}"
 
 
-def set_llm_key_ui(api_key: str):
+def activate_claude_mode(api_key: str):
+    """Switch the backend to Anthropic mode. Returns (status_line, cleared_key_input).
+
+    Does NOT eagerly load Qwen2-7B here — that happens on the first answer
+    request via `get_ui_llm()`, keeping the mode switch instant.
+    """
     if not api_key or not api_key.strip():
         return "Please paste an Anthropic API key first.", ""
     try:
         r = requests.post(
-            f"{FASTAPI_URL}/admin/llm_key",
-            json={"api_key": api_key.strip()},
-            timeout=10,
+            f"{FASTAPI_URL}/admin/extractor_mode",
+            json={"mode": "anthropic", "api_key": api_key.strip()},
+            timeout=30,
         )
         if r.status_code == 200:
-            # Clear the textbox so the key isn't left visible after save.
-            return _format_llm_status(r.json()), ""
-        # On 400 the body is the same status dict, so we can render it.
+            return _format_mode_status(r.json()), ""
         try:
-            return _format_llm_status(r.json()), api_key
+            return _format_mode_status(r.json()), api_key
         except Exception:
             return f"Error {r.status_code}: {r.text}", api_key
     except Exception as e:
         return f"An error occurred: {e}", api_key
 
 
-def clear_llm_key_ui():
+def activate_local_mode():
+    """Switch the backend to Local mode and load Qwen3-14B eagerly.
+
+    Before triggering the backend load we unload the UI's Qwen2-7B (if any) so
+    the GPU has headroom for the 8-bit Qwen3-14B (~16 GB). The backend request
+    blocks until the model is on GPU, so the user sees a single 'ready' status
+    once everything is in place.
+    """
+    unload_msg = unload_ui_llm()
     try:
-        r = requests.delete(f"{FASTAPI_URL}/admin/llm_key", timeout=5)
+        r = requests.post(
+            f"{FASTAPI_URL}/admin/extractor_mode",
+            json={"mode": "local"},
+            timeout=900,  # first run pulls ~28 GB from HF; subsequent loads ~30 s
+        )
         if r.status_code == 200:
-            return _format_llm_status(r.json()), ""
-        return f"Error {r.status_code}: {r.text}", ""
+            return f"{_format_mode_status(r.json())}\n{unload_msg}"
+        try:
+            return f"{_format_mode_status(r.json())}\n{unload_msg}"
+        except Exception:
+            return f"Error {r.status_code}: {r.text}\n{unload_msg}"
     except Exception as e:
-        return f"An error occurred: {e}", ""
+        return f"An error occurred: {e}\n{unload_msg}"
+
+
+def deactivate_extractor():
+    try:
+        r = requests.post(
+            f"{FASTAPI_URL}/admin/extractor_mode",
+            json={"mode": "off"},
+            timeout=60,
+        )
+        if r.status_code == 200:
+            return _format_mode_status(r.json())
+        return f"Error {r.status_code}: {r.text}"
+    except Exception as e:
+        return f"An error occurred: {e}"
 
 
 # ==========================================
@@ -554,7 +670,7 @@ def _run_rag_text_exp(experiment_id: str, label: str, n_pairs, regenerate, progr
             progress(done / max(total, 1), desc=f"Exp {experiment_id}: {done}/{total} pairs")
 
         scores, labels = run_experiment_rag_text(
-            pairs, llm_pipeline, FASTAPI_URL, progress_callback=cb
+            pairs, get_ui_llm(), FASTAPI_URL, progress_callback=cb
         )
         extra = {"rag": "no_enrollment" if experiment_id == "2" else "meld_train_enrolled"}
         path, _ = save_results(EVAL_RESULTS_DIR, experiment_id, scores, labels,
@@ -627,7 +743,7 @@ def _run_vox1_rag_text_exp(experiment_id: str, label: str, rag_tag: str,
                      desc=f"Vox1 Exp {experiment_id}: {done}/{total} pairs")
 
         scores, labels = run_experiment_rag_text(
-            pairs, llm_pipeline, FASTAPI_URL, progress_callback=cb
+            pairs, get_ui_llm(), FASTAPI_URL, progress_callback=cb
         )
         path, _ = save_results(EVAL_RESULTS_DIR, experiment_id, scores, labels,
                                "Qwen/Qwen2-7B-Instruct",
@@ -655,16 +771,13 @@ def run_vox1_exp3(n_pairs, regenerate, progress=gr.Progress()):
 # LongMemEval benchmark
 # ==========================================
 def _qwen_answer(prompt: str, max_new_tokens: int = 300) -> str:
-    """Run the UI's Qwen pipeline on a single prompt and return the generated answer."""
-    messages = [
-        {"role": "system", "content": "You are a helpful and precise analytical assistant."},
-        {"role": "user", "content": prompt},
-    ]
-    formatted = llm_pipeline.tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-    outputs = llm_pipeline(formatted, max_new_tokens=max_new_tokens, temperature=0.1)
-    return outputs[0]["generated_text"][len(formatted):].strip()
+    """Run the active answerer on a single prompt.
+
+    Delegates to `answer_with_llm` so LongMemEval runs respect the chosen mode:
+    in Local mode every prompt is dispatched to the backend's Qwen3-14B; in
+    Claude mode the UI's Qwen2-7B handles it.
+    """
+    return answer_with_llm(prompt, max_new_tokens=max_new_tokens)
 
 
 # Adapted from LongMemEval paper Appendix D (Figure 13, non-CoN prompt).
@@ -894,15 +1007,26 @@ def run_longmemeval_llm_only(split, n_questions, progress=gr.Progress()):
 # ==========================================
 with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
     gr.Markdown("# 🗣️ Speaker RAG Engine Demo")
-    gr.Markdown("This UI demonstrates a decoupled architecture. The backend extracts audio context and builds a Fact Sheet, which is then passed to a local Text LLM (`Qwen2-1.5B`) running in this UI script.")
+    gr.Markdown(
+        "This UI demonstrates a decoupled architecture. The backend extracts audio context "
+        "and builds a Fact Sheet, which is then passed to whichever Text LLM the user picked "
+        "in **LLM Settings** below: either the UI-side `Qwen2-7B-Instruct` (Claude API mode) "
+        "or the backend's `Qwen3-14B` (Local mode)."
+    )
     
-    with gr.Accordion("🔑 LLM Settings (Anthropic API key)", open=False):
+    with gr.Accordion("🔑 LLM Settings (KG extraction backend)", open=True):
         gr.Markdown(
-            "Optional: provide an Anthropic API key to enable **LLM-backed entity "
-            "extraction** during enrollment (Claude Haiku). When set, the knowledge "
-            "graph extracts richer entities than the regex/spaCy fallback. The key is "
-            "kept in the API process memory only — it is **not persisted to disk** and "
-            "is **never returned** by any endpoint."
+            "Choose how the knowledge graph extracts entities and relations during "
+            "enrollment. Two backends are supported:\n\n"
+            "- **Claude API (Haiku + Sonnet)** — fastest, highest-quality, but billed per "
+            "token. Requires an Anthropic API key. The UI's Qwen2-7B-Instruct handles "
+            "fact-sheet answering (lazy-loaded on first question).\n"
+            "- **Local Qwen3-14B (8-bit)** — free, runs entirely on the backend GPU "
+            "(~16 GB VRAM). The same model handles fact-sheet answering, so the UI's "
+            "Qwen2-7B is unloaded on switch. First activation downloads ~28 GB from "
+            "HuggingFace; subsequent restarts re-load from cache in ~30 s.\n\n"
+            "The Anthropic key (when used) is kept in the API process memory only — "
+            "it is **not persisted to disk** and is **never returned** by any endpoint."
         )
         with gr.Row():
             llm_key_input = gr.Textbox(
@@ -911,27 +1035,35 @@ with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
                 type="password",
                 scale=4,
             )
-            llm_set_btn = gr.Button("Save key", variant="primary", scale=1)
-            llm_clear_btn = gr.Button("Clear key", variant="stop", scale=1)
-            llm_refresh_btn = gr.Button("🔄", scale=1)
+            llm_set_btn = gr.Button("Activate Claude API", variant="primary", scale=1)
+        with gr.Row():
+            llm_local_btn = gr.Button("Activate Local Qwen3-14B", variant="primary", scale=2)
+            llm_clear_btn = gr.Button("Disable extractor", variant="stop", scale=1)
+            llm_refresh_btn = gr.Button("🔄 Refresh", scale=1)
         llm_status = gr.Textbox(
-            label="LLM extraction status",
+            label="Extractor status",
             interactive=False,
-            value=get_llm_status_ui(),
+            lines=2,
+            value=get_mode_status_ui(),
         )
 
         llm_set_btn.click(
-            fn=set_llm_key_ui,
+            fn=activate_claude_mode,
             inputs=[llm_key_input],
             outputs=[llm_status, llm_key_input],
         )
-        llm_clear_btn.click(
-            fn=clear_llm_key_ui,
+        llm_local_btn.click(
+            fn=activate_local_mode,
             inputs=[],
-            outputs=[llm_status, llm_key_input],
+            outputs=[llm_status],
+        )
+        llm_clear_btn.click(
+            fn=deactivate_extractor,
+            inputs=[],
+            outputs=[llm_status],
         )
         llm_refresh_btn.click(
-            fn=get_llm_status_ui,
+            fn=get_mode_status_ui,
             inputs=[],
             outputs=[llm_status],
         )

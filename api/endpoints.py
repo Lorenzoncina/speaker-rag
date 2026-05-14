@@ -5,13 +5,14 @@ import shutil
 import tempfile
 import torch
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, UploadFile, File, Form
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 
 from speaker_rag.rag import SpeakerRAG
 from speaker_rag.llm_extractor import LLMExtractor
+from speaker_rag.local_llm_extractor import LocalLLMExtractor
 
 app = FastAPI(
     title="Speaker RAG API", 
@@ -315,25 +316,162 @@ async def probe_similarity(audio: UploadFile = File(...), top_k: int = 20):
             os.remove(tmp_path)
 
 
+# ----------------------------------------------------------------------
+# Extractor mode management
+#
+# The KG layer can run in one of three modes:
+#   - "anthropic": Claude Haiku (entities) + Sonnet (relations + judges)
+#   - "local":     Qwen3-14B in 8-bit, all four LLM calls happen on-GPU
+#   - "off":       no LLM-backed extraction; graph falls back to regex/spaCy
+#
+# Switching to "local" loads Qwen3-14B eagerly so the user sees the cost up
+# front. Switching away from "local" unloads it to free VRAM (so the UI's
+# Qwen2-7B answerer can fit alongside the audio stack again).
+#
+# `_extractor_mode` tracks the current mode for status reporting.
+# `_local_extractor` is the live LocalLLMExtractor singleton — kept module-
+# level so `/llm/generate` can call it without poking at GraphService internals.
+# ----------------------------------------------------------------------
+_extractor_mode: str = "off"
+_local_extractor: Optional[LocalLLMExtractor] = None
+
+
+def _build_mode_status(extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Render the current mode + underlying extractor status as one payload."""
+    base = rag_system.graph_service.llm_status() if rag_system else {"enabled": False}
+    out = {"mode": _extractor_mode, **base}
+    if extra:
+        out.update(extra)
+    return out
+
+
+def _switch_to_anthropic(api_key: str, model: Optional[str]) -> Dict[str, Any]:
+    """Build an Anthropic extractor, swap it onto GraphService, drop any local model."""
+    global _extractor_mode, _local_extractor
+
+    kwargs: Dict[str, Any] = {"api_key": api_key}
+    if model:
+        kwargs["model"] = model
+    extractor = LLMExtractor(**kwargs)
+    status = rag_system.graph_service.set_llm_extractor(extractor)
+
+    if status.get("enabled"):
+        if _local_extractor is not None:
+            # Free the 8-bit Qwen3 weights now that we're back on the API path.
+            _local_extractor.unload()
+            _local_extractor = None
+        _extractor_mode = "anthropic"
+    return _build_mode_status()
+
+
+def _switch_to_local(model_name: Optional[str]) -> Dict[str, Any]:
+    """Eagerly load Qwen3-14B (or override) and route GraphService through it."""
+    global _extractor_mode, _local_extractor
+
+    if _local_extractor is not None:
+        # Already loaded — reuse it. Avoid double-loading 16+ GB of weights.
+        rag_system.graph_service.set_llm_extractor(_local_extractor)
+        _extractor_mode = "local"
+        return _build_mode_status()
+
+    extractor = LocalLLMExtractor(model_name=model_name or LocalLLMExtractor.DEFAULT_MODEL)
+    if not extractor.available:
+        # Load failed — surface the reason and keep the previous mode untouched.
+        return _build_mode_status(extra={
+            "enabled": False,
+            "reason": extractor.unavailable_reason,
+        })
+
+    _local_extractor = extractor
+    rag_system.graph_service.set_llm_extractor(extractor)
+    _extractor_mode = "local"
+    return _build_mode_status()
+
+
+def _switch_to_off() -> Dict[str, Any]:
+    """Disable LLM-backed extraction entirely and free any local model."""
+    global _extractor_mode, _local_extractor
+
+    rag_system.graph_service.set_llm_extractor(None)
+    if _local_extractor is not None:
+        _local_extractor.unload()
+        _local_extractor = None
+    _extractor_mode = "off"
+    return _build_mode_status()
+
+
 class SetLLMKeyRequest(BaseModel):
     api_key: str
     model: Optional[str] = None  # defaults to LLMExtractor's default (Haiku 4.5)
 
 
+class SetExtractorModeRequest(BaseModel):
+    mode: str  # "anthropic" | "local" | "off"
+    api_key: Optional[str] = None  # required when mode == "anthropic"
+    model: Optional[str] = None  # optional override for either backend
+
+
+@app.get("/admin/extractor_mode", tags=["Admin"])
+async def extractor_mode_status():
+    """Report the active extractor mode and underlying LLM status."""
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+    return _build_mode_status()
+
+
+@app.post("/admin/extractor_mode", tags=["Admin"])
+async def set_extractor_mode(req: SetExtractorModeRequest):
+    """Switch between Anthropic / local Qwen3-14B / off.
+
+    Loading Qwen3-14B in 8-bit takes ~30 s once cached and ~10 min on the first
+    request (HuggingFace download). The request blocks until the model is on
+    GPU so the UI can render an honest "ready" status afterwards.
+    """
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+
+    mode = (req.mode or "").strip().lower()
+    if mode == "anthropic":
+        key = (req.api_key or "").strip()
+        if not key:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "api_key is required for mode=anthropic"},
+            )
+        status = _switch_to_anthropic(api_key=key, model=req.model)
+        if not status.get("enabled"):
+            return JSONResponse(status_code=400, content=status)
+        return status
+    if mode == "local":
+        status = _switch_to_local(model_name=req.model)
+        if not status.get("enabled"):
+            return JSONResponse(status_code=400, content=status)
+        return status
+    if mode == "off":
+        return _switch_to_off()
+    return JSONResponse(
+        status_code=400,
+        content={"error": f"unknown mode '{mode}'. Expected: anthropic | local | off"},
+    )
+
+
+# ----------------------------------------------------------------------
+# Back-compat shims for the original /admin/llm_key endpoints.
+# These were the only way to enable LLM extraction before /admin/extractor_mode
+# existed. They keep working so older UI builds and curl scripts don't break.
+# ----------------------------------------------------------------------
 @app.get("/admin/llm_key", tags=["Admin"])
 async def llm_key_status():
     """Report whether LLM-backed entity extraction is currently active.
     The key itself is never returned."""
     if not rag_system:
         return JSONResponse(status_code=500, content={"error": "Models are still loading."})
-    return rag_system.graph_service.llm_status()
+    return _build_mode_status()
 
 
 @app.post("/admin/llm_key", tags=["Admin"])
 async def set_llm_key(req: SetLLMKeyRequest):
-    """Provide an Anthropic API key at runtime (process-memory only, not persisted).
-    Re-instantiates the LLM extractor and swaps it onto the live GraphService.
-    The submitted key is not echoed back or logged."""
+    """Compatibility shim: equivalent to POST /admin/extractor_mode {mode='anthropic'}."""
     if not rag_system:
         return JSONResponse(status_code=500, content={"error": "Models are still loading."})
 
@@ -341,12 +479,8 @@ async def set_llm_key(req: SetLLMKeyRequest):
     if not key:
         return JSONResponse(status_code=400, content={"error": "api_key is required"})
 
-    kwargs = {"api_key": key}
-    if req.model:
-        kwargs["model"] = req.model
-    extractor = LLMExtractor(**kwargs)
-    status = rag_system.graph_service.set_llm_extractor(extractor)
-    if not status["enabled"]:
+    status = _switch_to_anthropic(api_key=key, model=req.model)
+    if not status.get("enabled"):
         return JSONResponse(status_code=400, content=status)
     return status
 
@@ -356,7 +490,42 @@ async def clear_llm_key():
     """Disable LLM-backed extraction; subsequent ingests fall back to regex/spaCy."""
     if not rag_system:
         return JSONResponse(status_code=500, content={"error": "Models are still loading."})
-    return rag_system.graph_service.set_llm_extractor(None)
+    return _switch_to_off()
+
+
+# ----------------------------------------------------------------------
+# Local-LLM generation pass-through used by the UI when in "local" mode.
+# ----------------------------------------------------------------------
+class LLMGenerateRequest(BaseModel):
+    prompt: str
+    max_new_tokens: int = 300
+
+
+@app.post("/llm/generate", tags=["LLM"])
+async def llm_generate(req: LLMGenerateRequest):
+    """Run the loaded local Qwen3-14B on a fact-sheet prompt and return the answer.
+
+    Only works when mode == 'local'. In any other mode this returns 409 so the
+    caller knows to fall back to its own (UI-side) Qwen2-7B pipeline.
+    """
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+    if _extractor_mode != "local" or _local_extractor is None or not _local_extractor.available:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "Local LLM is not loaded. Switch /admin/extractor_mode to 'local' first.",
+                "mode": _extractor_mode,
+            },
+        )
+    if not (req.prompt or "").strip():
+        return JSONResponse(status_code=400, content={"error": "prompt is required"})
+
+    try:
+        text = _local_extractor.generate(req.prompt, max_new_tokens=int(req.max_new_tokens))
+        return {"model": _local_extractor.model_name, "text": text}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.post("/admin/dedupe_entities", tags=["Admin"])
