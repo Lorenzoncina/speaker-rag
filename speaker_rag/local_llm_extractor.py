@@ -22,8 +22,15 @@ predicates):
     dropped) to avoid losing salient extractions on a smaller model.
   - Relation predicates: free UPPER_SNAKE_CASE — same shape as the Sonnet path.
 
-Quantization: 8-bit via bitsandbytes (Qwen3-14B int8 ≈ 16 GB VRAM, fits
-alongside the existing audio stack on a 46 GB GPU).
+Inference backend: vLLM with prefix caching + continuous batching. Since our
+system prompts are byte-identical across every call, prefix caching means
+vLLM skips re-prefilling them after the first request — the bulk of input
+tokens cost only one prefill per process lifetime.
+
+Quantization: 4-bit AWQ by default (Qwen3-14B-AWQ ≈ 8 GB VRAM, dedicated
+fast CUDA kernels). Fits alongside the existing audio stack on a 46 GB GPU
+with plenty of headroom for the KV cache. Pass `quantization=None` to load
+the unquantized model, or `"gptq"` to use a GPTQ build.
 """
 from __future__ import annotations
 
@@ -32,6 +39,7 @@ import json
 import os
 import re
 import threading
+import time
 from typing import Any, Dict, List, Optional
 
 
@@ -178,23 +186,27 @@ class LocalLLMExtractor:
     """Qwen3-14B-backed extractor with the same surface as `LLMExtractor`.
 
     The model is loaded eagerly in the constructor so callers can see init
-    errors (OOM, missing weights, bitsandbytes mismatch) up front. Use
+    errors (OOM, missing weights, quantization mismatch) up front. Use
     `unload()` to free GPU memory when switching back to the Anthropic mode.
     """
 
-    DEFAULT_MODEL = "Qwen/Qwen3-14B"
+    DEFAULT_MODEL = "Qwen/Qwen3-14B-AWQ"
 
     def __init__(
         self,
         model_name: str = DEFAULT_MODEL,
-        max_tokens: int = 2048,
+        max_tokens: int = 1024,
         device: str = "cuda",
-        load_in_8bit: bool = True,
+        quantization: Optional[str] = "awq_marlin",
+        gpu_memory_utilization: float = 0.55,
+        max_model_len: int = 32768,
     ):
         self.model_name = model_name
         self.max_tokens = max_tokens
         self._device = device
-        self._load_in_8bit = load_in_8bit
+        self._quantization = quantization
+        self._gpu_memory_utilization = gpu_memory_utilization
+        self._max_model_len = max_model_len
         self._tokenizer = None
         self._model = None
         self._lock = threading.Lock()
@@ -215,32 +227,47 @@ class LocalLLMExtractor:
     # ------------------------------------------------------------------
 
     def _load(self) -> None:
-        import torch
-        from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+        from transformers import AutoTokenizer
+        from vllm import LLM
 
-        print(f"[LocalLLMExtractor] Loading {self.model_name} (8bit={self._load_in_8bit})...")
+        print(
+            f"[LocalLLMExtractor] Loading {self.model_name} via vLLM "
+            f"(quantization={self._quantization})..."
+        )
 
-        quant_config = None
-        if self._load_in_8bit:
-            quant_config = BitsAndBytesConfig(load_in_8bit=True)
-
+        # Keep tokenizer separate so we can apply Qwen3's chat template with
+        # `enable_thinking=False` (vLLM's chat helper exposes this through
+        # `chat_template_kwargs`, but applying the template explicitly keeps
+        # the call site identical to the previous transformers path).
         self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        model_kwargs: Dict[str, Any] = {
-            "device_map": "auto",
-            "torch_dtype": torch.float16,
+
+        llm_kwargs: Dict[str, Any] = {
+            "model": self.model_name,
+            "dtype": "float16",
+            "gpu_memory_utilization": self._gpu_memory_utilization,
+            "max_model_len": self._max_model_len,
+            # Prefix caching is the big win — our four system prompts are
+            # byte-identical across every call, so vLLM skips re-prefilling
+            # them after the first request.
+            "enable_prefix_caching": True,
+            "trust_remote_code": True,
         }
-        if quant_config is not None:
-            model_kwargs["quantization_config"] = quant_config
-        self._model = AutoModelForCausalLM.from_pretrained(self.model_name, **model_kwargs)
-        self._model.eval()
-        print(f"[LocalLLMExtractor] {self.model_name} loaded on {self._model.device}.")
+        if self._quantization:
+            llm_kwargs["quantization"] = self._quantization
+
+        self._model = LLM(**llm_kwargs)
+        print(f"[LocalLLMExtractor] {self.model_name} loaded via vLLM.")
 
     def unload(self) -> None:
         """Free GPU memory. Used when switching modes."""
         with self._lock:
             if self._model is not None:
+                # vLLM holds onto the engine via several internal references;
+                # explicit shutdown release the executor + KV cache.
                 try:
-                    self._model.cpu()
+                    shutdown = getattr(self._model.llm_engine, "shutdown", None)
+                    if callable(shutdown):
+                        shutdown()
                 except Exception:
                     pass
                 del self._model
@@ -253,6 +280,15 @@ class LocalLLMExtractor:
             import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+        except Exception:
+            pass
+        try:
+            import contextlib
+            from vllm.distributed import destroy_model_parallel, destroy_distributed_environment
+            with contextlib.suppress(Exception):
+                destroy_model_parallel()
+            with contextlib.suppress(Exception):
+                destroy_distributed_environment()
         except Exception:
             pass
         print(f"[LocalLLMExtractor] {self.model_name} unloaded.")
@@ -274,8 +310,9 @@ class LocalLLMExtractor:
         system_prompt: str,
         user_prompt: str,
         max_new_tokens: Optional[int] = None,
+        stop: Optional[List[str]] = None,
     ) -> str:
-        import torch
+        from vllm import SamplingParams
 
         if not self.available:
             return ""
@@ -284,35 +321,57 @@ class LocalLLMExtractor:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        with self._lock:
-            # Qwen3 exposes an `enable_thinking` flag on its chat template that
-            # toggles the <think>...</think> CoT block. We want short
-            # deterministic JSON output, so thinking is off.
-            try:
-                prompt_text = self._tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                    enable_thinking=False,
-                )
-            except TypeError:
-                prompt_text = self._tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                )
+        # Qwen3 exposes an `enable_thinking` flag on its chat template that
+        # toggles the <think>...</think> CoT block. We want short
+        # deterministic JSON output, so thinking is off.
+        try:
+            prompt_text = self._tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+        except TypeError:
+            prompt_text = self._tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
 
-            inputs = self._tokenizer(prompt_text, return_tensors="pt").to(self._model.device)
-            with torch.no_grad():
-                outputs = self._model.generate(
-                    **inputs,
-                    max_new_tokens=max_new_tokens,
-                    do_sample=False,
-                    temperature=0.1,
-                    pad_token_id=self._tokenizer.eos_token_id,
-                )
-            generated = outputs[0][inputs["input_ids"].shape[1]:]
-            return self._tokenizer.decode(generated, skip_special_tokens=True)
+        # Stop as soon as Qwen finishes the JSON object — guards against
+        # over-generation prose after the closing brace. The triple-newline
+        # stop catches the common "explanation paragraph" tail.
+        stop_seqs = ["\n\n\n", "```"]
+        if stop:
+            stop_seqs.extend(stop)
+
+        sampling_params = SamplingParams(
+            temperature=0.0,  # greedy — matches the prior do_sample=False intent
+            max_tokens=max_new_tokens,
+            stop=stop_seqs,
+        )
+
+        t0 = time.perf_counter()
+        with self._lock:
+            outputs = self._model.generate(
+                [prompt_text],
+                sampling_params,
+                use_tqdm=False,
+            )
+        if not outputs or not outputs[0].outputs:
+            return ""
+        gen = outputs[0].outputs[0]
+        elapsed = time.perf_counter() - t0
+        # Single concise line per call so we can spot which path dominates.
+        n_prompt = len(outputs[0].prompt_token_ids) if outputs[0].prompt_token_ids else 0
+        n_out = len(gen.token_ids) if gen.token_ids else 0
+        tps = n_out / elapsed if elapsed > 0 else 0.0
+        print(
+            f"[LocalLLMExtractor] gen: {elapsed:.2f}s  "
+            f"prompt_tok={n_prompt}  out_tok={n_out}  tok/s={tps:.1f}  "
+            f"finish={gen.finish_reason}"
+        )
+        return gen.text
 
     def generate(self, prompt: str, max_new_tokens: int = 300) -> str:
         """Public generation helper for the FastAPI `/llm/generate` route.
@@ -340,7 +399,9 @@ class LocalLLMExtractor:
             return []
         user_prompt = self._format_dialogue(utterances)
         try:
-            raw = self._generate(_ENTITY_SYSTEM_PROMPT, user_prompt)
+            # Entity JSON output is rarely >600 tokens in practice; cap at 768
+            # to bound the worst case without leaving headroom for prose tails.
+            raw = self._generate(_ENTITY_SYSTEM_PROMPT, user_prompt, max_new_tokens=768)
         except Exception as e:
             print(f"[LocalLLMExtractor] entity generate failed: {e}")
             return []
@@ -359,7 +420,9 @@ class LocalLLMExtractor:
             return []
         user_prompt = self._format_relation_prompt(utterances, entities)
         try:
-            raw = self._generate(_RELATION_SYSTEM_PROMPT, user_prompt)
+            # Relations tend to be denser than entities; 1024 covers the
+            # observed p99 output length on MELD-style transcripts.
+            raw = self._generate(_RELATION_SYSTEM_PROMPT, user_prompt, max_new_tokens=1024)
         except Exception as e:
             print(f"[LocalLLMExtractor] relation generate failed: {e}")
             return []
