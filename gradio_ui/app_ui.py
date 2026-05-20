@@ -3,6 +3,8 @@ import sys
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, List, Optional
+
 import gradio as gr
 import requests
 import torch
@@ -30,6 +32,7 @@ from tests.eval_speaker_verification import (
 FASTAPI_URL = "http://127.0.0.1:8006" # fbk server (requires SSH Port Forwarding)
 EVAL_RESULTS_DIR = str(Path(__file__).resolve().parent.parent / "tests" / "eval_results")
 LONGMEMEVAL_RESULTS_DIR = str(Path(__file__).resolve().parent.parent / "tests" / "longmemeval_results")
+MLCSLM_RESULTS_DIR = str(Path(__file__).resolve().parent.parent / "tests" / "mlcslm_results")
 
 # ==========================================
 # 🧠 "Bring Your Own LLM" Initialization
@@ -1021,6 +1024,348 @@ def run_longmemeval_llm_only(split, n_questions, progress=gr.Progress()):
 
 
 # ==========================================
+# Step 6: MLC-SLM Task 2 Benchmark
+# ==========================================
+# Multi-speaker, multi-lingual audio conversations + multi-choice questions.
+# Per conversation: clear DB → enroll the .wav (diarization + STT + KG) →
+# answer each A/B/C/D question via /llm/generate.
+#
+# LLM-only baseline path: skip enrollment, read the reference .txt alongside
+# the .wav, stuff it into the prompt as the conversation transcript.
+
+import re as _re_mlcslm
+
+_MLCSLM_LETTER_RE = _re_mlcslm.compile(r"\b([ABCD])\b")
+
+_MLCSLM_RAG_PROMPT = """You will answer a multiple-choice question about a recorded conversation.
+
+CONTEXT (retrieved from the conversation memory):
+{context}
+
+QUESTION: {question_stem}
+
+OPTIONS:
+A) {option_a}
+B) {option_b}
+C) {option_c}
+D) {option_d}
+
+Output ONLY the single letter (A, B, C, or D) of the best option. \
+Do NOT explain. Do NOT repeat the option text.
+ANSWER:"""
+
+_MLCSLM_LLM_ONLY_PROMPT = """You will answer a multiple-choice question about a recorded conversation.
+
+CONVERSATION TRANSCRIPT:
+{transcript}
+
+QUESTION: {question_stem}
+
+OPTIONS:
+A) {option_a}
+B) {option_b}
+C) {option_c}
+D) {option_d}
+
+Output ONLY the single letter (A, B, C, or D) of the best option. \
+Do NOT explain. Do NOT repeat the option text.
+ANSWER:"""
+
+
+def _mlcslm_open_output(mode_tag: str):
+    """Create the MLC-SLM results dir + open a new JSONL for incremental writes."""
+    os.makedirs(MLCSLM_RESULTS_DIR, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = Path(MLCSLM_RESULTS_DIR) / f"mlcslm_{mode_tag}_{stamp}.jsonl"
+    return path, open(path, "w")
+
+
+def _mlcslm_fetch_qa(qa_jsonl: str, limit: int) -> List[dict]:
+    """Fetch QA records from the backend (path is backend-side)."""
+    r = requests.get(
+        f"{FASTAPI_URL}/admin/mlcslm/qa",
+        params={"qa_jsonl": qa_jsonl, "limit": int(limit)},
+        timeout=120,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"/admin/mlcslm/qa {r.status_code}: {r.text[:300]}")
+    return r.json().get("records", []) or []
+
+
+def _mlcslm_prepare(audio_path: str, audio_root: str) -> dict:
+    r = requests.post(
+        f"{FASTAPI_URL}/admin/mlcslm/prepare",
+        json={"audio_path": audio_path, "audio_root": audio_root, "clear_first": True},
+        timeout=3600,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"/admin/mlcslm/prepare {r.status_code}: {r.text[:300]}")
+    return r.json()
+
+
+def _mlcslm_fetch_transcript(audio_path: str, audio_root: str, max_chars: int) -> str:
+    r = requests.get(
+        f"{FASTAPI_URL}/admin/mlcslm/transcript",
+        params={"audio_path": audio_path, "audio_root": audio_root, "max_chars": int(max_chars)},
+        timeout=120,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"/admin/mlcslm/transcript {r.status_code}: {r.text[:300]}")
+    return r.json().get("transcript", "") or ""
+
+
+def _mlcslm_option_text(question: dict, label: str) -> str:
+    for opt in question.get("options", []):
+        if str(opt.get("label", "")).strip().upper() == label:
+            return str(opt.get("text", "")).strip()
+    return ""
+
+
+def _mlcslm_parse_letter(raw: str) -> Optional[str]:
+    if not raw:
+        return None
+    m = _MLCSLM_LETTER_RE.search(raw.strip())
+    return m.group(1) if m else None
+
+
+def _mlcslm_qwen_letter(prompt: str) -> str:
+    """Route through the backend's Qwen3-14B (same answerer as the RAG path)."""
+    return _answer_with_backend_local(prompt, max_new_tokens=8)
+
+
+def run_mlcslm_rag(qa_jsonl_str, audio_root_str, n_audios, progress=gr.Progress()):
+    """Run MLC-SLM Task 2 with full SpeakerRAG. Paths are backend-side."""
+    if _backend_extractor_mode() != "local":
+        return (
+            "MLC-SLM aborted: backend extractor mode is not 'local'.\n"
+            "Activate Local Qwen-14B (Step 4) first."
+        )
+
+    qa_jsonl_str = (qa_jsonl_str or "").strip()
+    audio_root_str = (audio_root_str or "").strip()
+    if not qa_jsonl_str:
+        return "QA JSONL path is empty."
+    if not audio_root_str:
+        return "Audio root path is empty."
+
+    try:
+        n_audios = int(n_audios)
+    except (TypeError, ValueError):
+        n_audios = -1
+
+    try:
+        records = _mlcslm_fetch_qa(qa_jsonl_str, n_audios)
+    except Exception as e:
+        return f"Failed to fetch QA from backend: {e}"
+
+    total_audios = len(records)
+    total_q = sum(len(r.get("questions", [])) for r in records)
+    out_path, out_f = _mlcslm_open_output("rag")
+    log = [
+        f"Running MLC-SLM Task 2 (SpeakerRAG) — {total_audios} audios, {total_q} questions",
+        f"  Answerer: backend Qwen3-14B-AWQ via vLLM.",
+        f"  Backend QA JSONL: {qa_jsonl_str}",
+        f"  Backend audio root: {audio_root_str}",
+        f"  Output: {out_path}",
+        "",
+    ]
+
+    n_ok = 0
+    n_fail = 0
+    n_correct = 0
+    try:
+        for i, rec in enumerate(records):
+            progress(i / max(total_audios, 1), desc=f"[{i + 1}/{total_audios}]")
+            jsonl_path = rec.get("path", "")
+            questions = rec.get("questions", []) or []
+            if not questions:
+                continue
+
+            # Clear DB + enroll the conversation, both delegated to the backend.
+            try:
+                prep = _mlcslm_prepare(jsonl_path, audio_root_str)
+                wav_name = Path(prep.get("wav_path", "") or jsonl_path).name
+            except Exception as e:
+                n_fail += len(questions)
+                log.append(f"[{i + 1}/{total_audios}] PREPARE {jsonl_path} FAIL: {e}")
+                continue
+
+            log.append(f"[{i + 1}/{total_audios}] enrolled {wav_name}; "
+                       f"{len(questions)} questions")
+
+            for q in questions:
+                try:
+                    ret = requests.post(
+                        f"{FASTAPI_URL}/rag/retrieve",
+                        data={"question": q.get("question_stem", "")},
+                        timeout=300,
+                    )
+                    if ret.status_code != 200:
+                        raise RuntimeError(f"/rag/retrieve {ret.status_code}")
+                    fact_sheet = ret.json().get("fact_sheet", "") or ""
+                    prompt = _MLCSLM_RAG_PROMPT.format(
+                        context=fact_sheet,
+                        question_stem=q.get("question_stem", ""),
+                        option_a=_mlcslm_option_text(q, "A"),
+                        option_b=_mlcslm_option_text(q, "B"),
+                        option_c=_mlcslm_option_text(q, "C"),
+                        option_d=_mlcslm_option_text(q, "D"),
+                    )
+                    raw = _mlcslm_qwen_letter(prompt)
+                    predicted = _mlcslm_parse_letter(raw)
+                except Exception as e:
+                    n_fail += 1
+                    log.append(f"    {q.get('question_id', '?')} FAIL: {e}")
+                    continue
+
+                gold = str(q.get("correct_answer", "")).strip().upper() or None
+                is_correct = (predicted is not None and predicted == gold)
+
+                out_f.write(json.dumps({
+                    "audio_path":       jsonl_path,
+                    "question_id":      q.get("question_id", ""),
+                    "question_stem":    q.get("question_stem", ""),
+                    "options":          q.get("options", []),
+                    "correct_answer":   gold,
+                    "predicted_answer": predicted,
+                    "raw_response":     raw,
+                    "is_correct":       is_correct,
+                }) + "\n")
+                out_f.flush()
+                n_ok += 1
+                if is_correct:
+                    n_correct += 1
+
+            running_acc = n_correct / max(n_ok, 1)
+            log.append(
+                f"[{i + 1}/{total_audios}] {wav_path.name}: "
+                f"{len(questions)} qs; running acc={running_acc:.3f}"
+            )
+    finally:
+        out_f.close()
+
+    final_acc = n_correct / max(n_ok, 1)
+    log.append("")
+    log.append(f"Done. {n_ok} answered, {n_correct} correct, {n_fail} failed. "
+               f"Accuracy={final_acc:.4f}")
+    log.append(f"Results: {out_path}")
+    return "\n".join(log)
+
+
+def run_mlcslm_llm_only(qa_jsonl_str, audio_root_str, n_audios, max_transcript_chars,
+                        progress=gr.Progress()):
+    """Run MLC-SLM Task 2 LLM-only. Paths are backend-side."""
+    if _backend_extractor_mode() != "local":
+        return (
+            "MLC-SLM LLM-only aborted: backend extractor mode is not 'local'.\n"
+            "Activate Local Qwen-14B (Step 4) first."
+        )
+
+    qa_jsonl_str = (qa_jsonl_str or "").strip()
+    audio_root_str = (audio_root_str or "").strip()
+    if not qa_jsonl_str:
+        return "QA JSONL path is empty."
+    if not audio_root_str:
+        return "Audio root path is empty."
+
+    try:
+        max_chars = int(max_transcript_chars)
+    except (TypeError, ValueError):
+        max_chars = 80000
+
+    try:
+        n_audios = int(n_audios)
+    except (TypeError, ValueError):
+        n_audios = -1
+
+    try:
+        records = _mlcslm_fetch_qa(qa_jsonl_str, n_audios)
+    except Exception as e:
+        return f"Failed to fetch QA from backend: {e}"
+
+    total_audios = len(records)
+    total_q = sum(len(r.get("questions", [])) for r in records)
+    out_path, out_f = _mlcslm_open_output("llm_only")
+    log = [
+        f"Running MLC-SLM Task 2 (LLM-only) — {total_audios} audios, {total_q} questions",
+        f"  Answerer: backend Qwen3-14B-AWQ via vLLM.",
+        f"  Backend QA JSONL: {qa_jsonl_str}",
+        f"  Backend audio root: {audio_root_str}",
+        f"  Transcript truncation: {max_chars} chars.",
+        f"  Output: {out_path}",
+        "",
+    ]
+
+    n_ok = 0
+    n_fail = 0
+    n_correct = 0
+    try:
+        for i, rec in enumerate(records):
+            progress(i / max(total_audios, 1), desc=f"[{i + 1}/{total_audios}]")
+            jsonl_path = rec.get("path", "")
+            questions = rec.get("questions", []) or []
+            if not questions:
+                continue
+
+            try:
+                transcript = _mlcslm_fetch_transcript(jsonl_path, audio_root_str, max_chars)
+            except Exception as e:
+                n_fail += len(questions)
+                log.append(f"[{i + 1}/{total_audios}] TRANSCRIPT FAIL ({jsonl_path}): {e}")
+                continue
+
+            for q in questions:
+                try:
+                    prompt = _MLCSLM_LLM_ONLY_PROMPT.format(
+                        transcript=transcript,
+                        question_stem=q.get("question_stem", ""),
+                        option_a=_mlcslm_option_text(q, "A"),
+                        option_b=_mlcslm_option_text(q, "B"),
+                        option_c=_mlcslm_option_text(q, "C"),
+                        option_d=_mlcslm_option_text(q, "D"),
+                    )
+                    raw = _mlcslm_qwen_letter(prompt)
+                    predicted = _mlcslm_parse_letter(raw)
+                except Exception as e:
+                    n_fail += 1
+                    log.append(f"    {q.get('question_id', '?')} FAIL: {e}")
+                    continue
+
+                gold = str(q.get("correct_answer", "")).strip().upper() or None
+                is_correct = (predicted is not None and predicted == gold)
+
+                out_f.write(json.dumps({
+                    "audio_path":       jsonl_path,
+                    "question_id":      q.get("question_id", ""),
+                    "question_stem":    q.get("question_stem", ""),
+                    "options":          q.get("options", []),
+                    "correct_answer":   gold,
+                    "predicted_answer": predicted,
+                    "raw_response":     raw,
+                    "is_correct":       is_correct,
+                }) + "\n")
+                out_f.flush()
+                n_ok += 1
+                if is_correct:
+                    n_correct += 1
+
+            running_acc = n_correct / max(n_ok, 1)
+            log.append(
+                f"[{i + 1}/{total_audios}] {wav_path.name}: "
+                f"{len(questions)} qs; running acc={running_acc:.3f}"
+            )
+    finally:
+        out_f.close()
+
+    final_acc = n_correct / max(n_ok, 1)
+    log.append("")
+    log.append(f"Done. {n_ok} answered, {n_correct} correct, {n_fail} failed. "
+               f"Accuracy={final_acc:.4f}")
+    log.append(f"Results: {out_path}")
+    return "\n".join(log)
+
+
+# ==========================================
 # Gradio UI Layout
 # ==========================================
 with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
@@ -1378,6 +1723,63 @@ with gr.Blocks(title="Speaker RAG Engine Demo", theme=gr.themes.Soft()) as demo:
             fn=run_longmemeval_llm_only,
             inputs=[lme_split, lme_n_questions],
             outputs=lme_output,
+        )
+
+    with gr.Accordion("🎙️ Step 6: MLC-SLM Task 2 Benchmark", open=False):
+        gr.Markdown(
+            "Evaluate the pipeline on the **MLC-SLM Challenge Task 2 — Multilingual "
+            "Conversational Speech Understanding**. For each multi-speaker phone-call "
+            "audio:\n"
+            "- **Run with SpeakerRAG** — clear DB → upload .wav to "
+            "`/rag/index_conversation` (pyannote diarization + STT + KG extraction) → "
+            "for each question, hit `/rag/retrieve` and ask Qwen3-14B to pick A/B/C/D.\n"
+            "- **Run LLM-only baseline** — skip enrollment; read the reference `.txt` "
+            "transcript that ships alongside each `.wav` and stuff it into the prompt. "
+            "Same answerer (Qwen3-14B-AWQ via vLLM), so the only diff between modes is "
+            "whether retrieval is involved.\n\n"
+            "**Path resolution:** the QA JSONL uses paths like "
+            "`mlc-slm-2nd-dev/English_Australian/1127_015_phone.wav` that don't match "
+            "the on-disk layout. We resolve by basename: every `.wav` under the audio "
+            "root is indexed once at the start of each run.\n\n"
+            "**Prerequisite:** backend extractor mode must be `local` (Step 4)."
+        )
+
+        with gr.Row():
+            mlcslm_qa_jsonl = gr.Textbox(
+                label="QA JSONL path",
+                value="/app/tests/mlcslm_data/mlcslm_2nd_dev_qa_300_subset.jsonl",
+                scale=3,
+            )
+            mlcslm_audio_root = gr.Textbox(
+                label="Audio root (folder containing language subdirs)",
+                value="/corpora/mlc-slm-2nd-workshop-data/dev_data",
+                scale=3,
+            )
+        with gr.Row():
+            mlcslm_n_audios = gr.Number(
+                label="Number of audios (-1 = all)",
+                value=5, precision=0, scale=1,
+            )
+            mlcslm_max_transcript_chars = gr.Number(
+                label="LLM-only: max transcript chars",
+                value=80000, precision=0, scale=1,
+            )
+
+        with gr.Row():
+            mlcslm_rag_btn = gr.Button("Run with SpeakerRAG", variant="primary")
+            mlcslm_baseline_btn = gr.Button("Run LLM-only baseline", variant="secondary")
+
+        mlcslm_output = gr.Textbox(label="MLC-SLM Progress / Log", lines=25)
+
+        mlcslm_rag_btn.click(
+            fn=run_mlcslm_rag,
+            inputs=[mlcslm_qa_jsonl, mlcslm_audio_root, mlcslm_n_audios],
+            outputs=mlcslm_output,
+        )
+        mlcslm_baseline_btn.click(
+            fn=run_mlcslm_llm_only,
+            inputs=[mlcslm_qa_jsonl, mlcslm_audio_root, mlcslm_n_audios, mlcslm_max_transcript_chars],
+            outputs=mlcslm_output,
         )
 
 

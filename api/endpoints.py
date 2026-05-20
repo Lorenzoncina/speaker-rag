@@ -997,3 +997,320 @@ def admin_longmemeval_haystack(split: str, question_id: str):
         "haystack_dates":    entry.get("haystack_dates", []),
         "haystack_sessions": entry.get("haystack_sessions", []),
     }
+
+
+# =============================================================================
+# MLC-SLM Task 2 — Multilingual Conversational Speech Understanding benchmark.
+#
+# Same client/server split as LongMemEval: the CLI/UI runner is a thin HTTP
+# client; the backend owns the dataset (multi-speaker phone-call .wav files +
+# .txt reference transcripts + a QA JSONL with multi-choice questions).
+#
+# Path resolution: the QA JSONL paths look like
+#   mlc-slm-2nd-dev/English_Australian/1127_015_phone.wav
+# but on disk the file lives at
+#   <audio_root>/English/Australian/1127_015_phone.wav
+# We index every .wav under audio_root once (cached per root) and look up by
+# basename — robust to any folder-naming drift in the JSONL.
+# =============================================================================
+
+
+from pathlib import Path as _PathML
+
+
+@lru_cache(maxsize=4)
+def _mlcslm_build_audio_index(audio_root: str) -> Dict[str, str]:
+    """Walk audio_root and return {basename: absolute_path} for every *.wav.
+
+    Cached per audio_root so repeated /prepare calls don't rewalk the tree.
+    Cache invalidates only on process restart — the dev dataset is static, so
+    that's fine.
+    """
+    root = _PathML(audio_root)
+    if not root.is_dir():
+        raise FileNotFoundError(f"audio_root not found: {audio_root}")
+    return {p.name: str(p.resolve()) for p in root.rglob("*.wav")}
+
+
+def _mlcslm_resolve_wav(jsonl_path: str, audio_root: str) -> str:
+    """Resolve a QA-JSONL audio path to its actual on-disk path via basename."""
+    index = _mlcslm_build_audio_index(audio_root)
+    basename = os.path.basename(jsonl_path)
+    real = index.get(basename)
+    if not real:
+        raise FileNotFoundError(
+            f"audio {basename!r} (jsonl path {jsonl_path!r}) not found under {audio_root}"
+        )
+    return real
+
+
+@app.get("/admin/mlcslm/qa", tags=["MLC-SLM"])
+def admin_mlcslm_qa(qa_jsonl: str, limit: int = -1):
+    """Load and return MLC-SLM Task 2 QA records from a JSONL on the BACKEND.
+
+    The runner client uses this to fetch the question list without needing
+    the dataset to be mounted in its own container.
+    """
+    if not os.path.isfile(qa_jsonl):
+        return JSONResponse(status_code=404,
+                            content={"error": f"QA file not found on backend: {qa_jsonl}"})
+    try:
+        records: List[dict] = []
+        with open(qa_jsonl) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                records.append(json.loads(line))
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"failed to parse JSONL: {e}"})
+
+    if limit and int(limit) > 0:
+        records = records[: int(limit)]
+    n_questions = sum(len(r.get("questions", [])) for r in records)
+    return {
+        "qa_jsonl": qa_jsonl,
+        "n_audios": len(records),
+        "n_questions": n_questions,
+        "records": records,
+    }
+
+
+@app.get("/admin/mlcslm/transcript", tags=["MLC-SLM"])
+def admin_mlcslm_transcript(audio_path: str, audio_root: str, max_chars: int = 0):
+    """Read the .txt reference transcript that ships alongside a .wav.
+
+    audio_path: the JSONL-style path (or any path whose basename matches a
+                .wav under audio_root).
+    audio_root: backend-side root containing the dataset language folders.
+    max_chars: optional truncation cap; <=0 means no truncation.
+    """
+    try:
+        wav_real = _mlcslm_resolve_wav(audio_path, audio_root)
+    except FileNotFoundError as e:
+        return JSONResponse(status_code=404, content={"error": str(e)})
+
+    txt_real = os.path.splitext(wav_real)[0] + ".txt"
+    if not os.path.isfile(txt_real):
+        return JSONResponse(status_code=404,
+                            content={"error": f"transcript not found alongside wav: {txt_real}"})
+
+    try:
+        with open(txt_real, "r", errors="replace") as f:
+            text = f.read().strip()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"failed to read transcript: {e}"})
+
+    truncated = False
+    if int(max_chars) > 0 and len(text) > int(max_chars):
+        text = text[: int(max_chars)] + "\n\n[...truncated due to context limit...]"
+        truncated = True
+
+    return {
+        "audio_path": audio_path,
+        "wav_path":   wav_real,
+        "txt_path":   txt_real,
+        "transcript": text,
+        "n_chars":    len(text),
+        "truncated":  truncated,
+    }
+
+
+class ReloadDiarizationRequest(BaseModel):
+    hf_auth_token: str  # the fresh HF token, with access to pyannote/speaker-diarization-3.1
+
+
+@app.post("/admin/reload_diarization", tags=["Admin"])
+def admin_reload_diarization(req: ReloadDiarizationRequest):
+    """Rebuild the pyannote diarization pipeline inside the running worker.
+
+    The diarization service is a module-level singleton that's cached once at
+    first use. If it was built with a missing/invalid HF token, the underlying
+    pyannote pipeline ends up as None and every conversation enrollment dies
+    with 'NoneType is not callable'. This endpoint lets you swap in a working
+    token and force the singleton + the RAG-system-level cache to be rebuilt,
+    without restarting the FastAPI process.
+    """
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+
+    token = (req.hf_auth_token or "").strip()
+    if not token:
+        return JSONResponse(status_code=400, content={"error": "hf_auth_token is required"})
+
+    # Compatibility shims: pyannote.audio 4.x calls several torchaudio APIs
+    # that were removed in torchaudio >= 2.5 / 2.7. Patch the module BEFORE
+    # we trigger the pipeline build so pyannote finds the attributes it expects.
+    try:
+        import torchaudio
+
+        # 1. torchaudio.AudioMetaData — removed in torchaudio >= 2.7.
+        if not hasattr(torchaudio, "AudioMetaData"):
+            _patched = False
+            for modpath in ("torchaudio._backend.common", "torchaudio.backend.common"):
+                try:
+                    mod = __import__(modpath, fromlist=["AudioMetaData"])
+                    torchaudio.AudioMetaData = mod.AudioMetaData
+                    _patched = True
+                    break
+                except (ImportError, AttributeError):
+                    continue
+            if not _patched:
+                class _AudioMetaDataStub:
+                    pass
+                torchaudio.AudioMetaData = _AudioMetaDataStub
+
+        # 2. torchaudio.list_audio_backends — deprecated in 2.0, removed in 2.5+.
+        # pyannote uses it to probe which backends are available; the new
+        # backend layer always has soundfile, so reporting just that is safe.
+        if not hasattr(torchaudio, "list_audio_backends"):
+            def _list_audio_backends_compat():
+                names = []
+                for name in ("soundfile", "sox_io", "ffmpeg"):
+                    try:
+                        __import__(name)
+                        names.append(name)
+                    except ImportError:
+                        continue
+                return names or ["soundfile"]
+            torchaudio.list_audio_backends = _list_audio_backends_compat
+
+        # 3. torchaudio.get_audio_backend / set_audio_backend — same removal.
+        if not hasattr(torchaudio, "get_audio_backend"):
+            torchaudio.get_audio_backend = lambda: "soundfile"
+        if not hasattr(torchaudio, "set_audio_backend"):
+            torchaudio.set_audio_backend = lambda *_args, **_kwargs: None
+
+        # 4. torchaudio.load / info / save:
+        #    - In torchaudio >= 2.7, when they exist, they default to a
+        #      torchcodec backend; wrap to force backend="soundfile".
+        #    - In some builds (e.g. torchaudio 2.8+), `info` is gone as a
+        #      top-level attribute. Install a soundfile-based stub so
+        #      pyannote's `torchaudio.info(path)` lookup keeps working.
+        def _make_wrapper(orig_fn):
+            def _wrapped(*args, **kwargs):
+                if "backend" not in kwargs:
+                    kwargs["backend"] = "soundfile"
+                return orig_fn(*args, **kwargs)
+            _wrapped._compat_wrapped = True
+            return _wrapped
+
+        def _info_stub(uri, *_args, **_kwargs):
+            import soundfile as sf
+            with sf.SoundFile(str(uri)) as f:
+                meta = torchaudio.AudioMetaData()
+                meta.sample_rate     = int(f.samplerate)
+                meta.num_frames      = int(len(f))
+                meta.num_channels    = int(f.channels)
+                meta.bits_per_sample = 0
+                meta.encoding        = str(f.subtype or "PCM_S")
+                return meta
+        _info_stub._compat_wrapped = True
+
+        def _load_stub(uri, *_args, **kwargs):
+            import soundfile as sf
+            import torch as _torch
+            data, sr = sf.read(str(uri), always_2d=True, dtype="float32")
+            channels_first = kwargs.get("channels_first", True)
+            arr = data.T if channels_first else data
+            return _torch.from_numpy(arr).contiguous(), int(sr)
+        _load_stub._compat_wrapped = True
+
+        def _save_stub(uri, src, sample_rate, *_args, **kwargs):
+            import soundfile as sf
+            channels_first = kwargs.get("channels_first", True)
+            t = src.cpu().detach().numpy()
+            if channels_first:
+                t = t.T
+            sf.write(str(uri), t, int(sample_rate))
+        _save_stub._compat_wrapped = True
+
+        for _fn_name, _stub in (("load", _load_stub), ("info", _info_stub), ("save", _save_stub)):
+            _fn = getattr(torchaudio, _fn_name, None)
+            if _fn is None:
+                # Attribute is gone — install a soundfile-based stub.
+                setattr(torchaudio, _fn_name, _stub)
+            elif not getattr(_fn, "_compat_wrapped", False):
+                # Attribute exists — wrap it to default backend="soundfile".
+                setattr(torchaudio, _fn_name, _make_wrapper(_fn))
+    except Exception:
+        pass
+
+    # Wipe the module-level singleton so the factory rebuilds from scratch.
+    from speaker_rag import diarization_service as diar_mod
+    diar_mod._Diarization_Service._instance = None
+    diar_mod._Diarization_Service._pipeline = None
+    diar_mod._Diarization_Service._embedding_model = None
+    diar_mod._Diarization_Service._device = None
+
+    # Also clear the per-rag-system cache so the lazy property rebuilds.
+    rag_system._diarization_service = None
+    rag_system._hf_auth_token = token
+
+    # Trigger a fresh build right now so the caller sees any failure here,
+    # not on the first /admin/mlcslm/prepare call later.
+    try:
+        svc = rag_system.diarization_service  # property → factory call
+    except Exception as e:
+        return JSONResponse(status_code=500,
+                            content={"error": f"diarization rebuild failed: {e}"})
+
+    pipeline_ok = getattr(svc, "_pipeline", None) is not None
+    if not pipeline_ok:
+        return JSONResponse(status_code=500, content={
+            "error": "diarization pipeline is still None after rebuild — token is likely "
+                     "invalid, or the account has not accepted the gated model license at "
+                     "https://huggingface.co/pyannote/speaker-diarization-3.1",
+        })
+
+    return {
+        "status": "success",
+        "message": "pyannote diarization pipeline rebuilt and ready.",
+    }
+
+
+class MLCSLMPrepareRequest(BaseModel):
+    audio_path: str  # JSONL-style path, e.g. "mlc-slm-2nd-dev/English_Australian/1127.wav"
+    audio_root: str  # backend-side absolute path to the dataset root
+    clear_first: bool = True  # wipe the DB before enrolling (per-question isolation)
+
+
+@app.post("/admin/mlcslm/prepare", tags=["MLC-SLM"])
+def admin_mlcslm_prepare(req: MLCSLMPrepareRequest):
+    """Resolve one MLC-SLM audio, clear the DB, and run the full enrollment.
+
+    Equivalent to the LongMemEval /admin/longmemeval/prepare flow but for a
+    single multi-speaker audio file. After this returns 200, the caller can
+    immediately POST questions to /rag/retrieve + /llm/generate.
+    """
+    if not rag_system:
+        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
+
+    try:
+        wav_real = _mlcslm_resolve_wav(req.audio_path, req.audio_root)
+    except FileNotFoundError as e:
+        return JSONResponse(status_code=404, content={"error": str(e)})
+
+    if req.clear_first:
+        try:
+            rag_system.clear_database()
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": f"clear_database failed: {e}"})
+
+    try:
+        result = rag_system.index_conversation(
+            audio_path=wav_real,
+            speaker_map=None,
+            num_speakers=None,
+            vtt_path=None,
+        )
+    except Exception as e:
+        return JSONResponse(status_code=500,
+                            content={"error": f"index_conversation failed: {e}"})
+
+    return {
+        "status":      "success",
+        "audio_path":  req.audio_path,
+        "wav_path":    wav_real,
+        "enrollment":  result,
+    }
