@@ -797,10 +797,10 @@ Answer:"""
 def _flatten_haystack(haystack_sessions, haystack_dates, max_chars: int = 80000) -> str:
     """Flatten the haystack into a single text blob, truncating from the end if too long.
 
-    Qwen2-7B-Instruct has a ~32k token context window (~96k chars). We cap at
-    80k chars to leave room for the prompt scaffolding and answer. The full
-    `s_cleaned` haystack averages ~115k tokens and will be truncated; the
-    `oracle` split typically fits without truncation.
+    The backend's Qwen3-14B-AWQ engine is loaded with max_model_len=32k tokens
+    (~96k chars). We cap at 80k chars to leave room for the prompt scaffolding
+    and answer. The full `s_cleaned` haystack averages ~115k tokens and will
+    be truncated; the `oracle` split typically fits without truncation.
     """
     lines = []
     for i, session in enumerate(haystack_sessions):
@@ -928,7 +928,13 @@ def run_longmemeval_rag(split, n_questions, enable_kg, progress=gr.Progress()):
 
 
 def run_longmemeval_llm_only(split, n_questions, progress=gr.Progress()):
-    """Run the benchmark with Qwen alone: full haystack stuffed into the prompt, no RAG."""
+    """Run the benchmark with Qwen alone: full haystack stuffed into the prompt, no RAG.
+
+    Always routes the answer call to the BACKEND's loaded model
+    (Qwen3-14B-AWQ via vLLM) so this baseline shares the exact same answerer
+    as the RAG path — keeping the comparison apples-to-apples. Requires the
+    backend extractor mode to be 'local'.
+    """
     try:
         questions = _lme_questions(split, n_questions)
     except Exception as e:
@@ -938,10 +944,20 @@ def run_longmemeval_llm_only(split, n_questions, progress=gr.Progress()):
     if total == 0:
         return f"No questions found in split '{split}'."
 
+    # Preflight: refuse to start when the backend has no LLM loaded — otherwise
+    # every /llm/generate call would 409 and we'd write zero results.
+    if _backend_extractor_mode() != "local":
+        return (
+            "LLM-only baseline aborted: backend extractor mode is not 'local'.\n"
+            "Activate Local Qwen-14B on the backend first (Step 4 above), "
+            "then re-run this baseline."
+        )
+
     out_path, out_f = _lme_open_output("llm_only", split)
     log = [
         f"Running LongMemEval (LLM-only baseline) on '{split}' — {total} questions",
-        f"  Qwen2-7B-Instruct context: ~32k tokens; haystack truncated to ~80k chars.",
+        f"  Answerer: backend Qwen3-14B-AWQ via vLLM (max_model_len=32k).",
+        f"  Haystack truncated to ~80k chars to leave room for prompt + answer.",
         f"  Output: {out_path}",
         "",
     ]
@@ -975,7 +991,9 @@ def run_longmemeval_llm_only(split, n_questions, progress=gr.Progress()):
             )
 
             try:
-                hypothesis = _qwen_answer(prompt, max_new_tokens=300)
+                # Force-route through the backend so this baseline always uses
+                # Qwen3-14B-AWQ via vLLM, matching the RAG path's answerer.
+                hypothesis = _answer_with_backend_local(prompt, max_new_tokens=300)
             except Exception as e:
                 log.append(f"[{i + 1}/{total}] QWEN exception: {e}")
                 continue
