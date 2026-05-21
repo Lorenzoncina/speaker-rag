@@ -163,6 +163,10 @@ def main() -> int:
                    help="Max number of audio conversations to process; -1 = all.")
     p.add_argument("--max-new-tokens", type=int, default=8,
                    help="Token budget for the answer letter (default: %(default)s).")
+    p.add_argument("--max-fact-sheet-chars", type=int, default=95000,
+                   help="Truncate the retrieved FACT SHEET to this many chars before "
+                        "building the MCQ prompt (default: %(default)s ≈ 28k tokens, "
+                        "leaving headroom inside the 32k vLLM context).")
     p.add_argument("--output", default=None)
     p.add_argument("--resume", action="store_true",
                    help="If --output exists, skip question_ids already present in it.")
@@ -240,6 +244,11 @@ def main() -> int:
                 t_q = time.perf_counter()
                 try:
                     fact_sheet = retrieve_fact_sheet(args.base_url, q.get("question_stem", ""))
+                    if len(fact_sheet) > args.max_fact_sheet_chars:
+                        fact_sheet = (
+                            fact_sheet[: args.max_fact_sheet_chars]
+                            + "\n\n[...truncated to fit within the model context window...]"
+                        )
                     prompt = build_mcq_prompt(fact_sheet, q)
                     raw = qwen_generate(args.base_url, prompt, args.max_new_tokens)
                     predicted = parse_letter(raw)
