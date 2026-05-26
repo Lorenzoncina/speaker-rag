@@ -19,6 +19,7 @@ Author: Lorenzo Concina
 import os
 import re
 import uuid
+import inspect
 import tempfile
 import numpy as np
 import torch
@@ -424,8 +425,12 @@ def Diarization_Service(embedding_model, device: str, hf_auth_token: str = None)
             )
         pipeline_kwargs = {}
         if hf_auth_token:
-            # pyannote 4.x uses 'token'; 'use_auth_token' was removed in HF Hub >=0.17
-            pipeline_kwargs["token"] = hf_auth_token
+            # Parameter name differs by version: 'token' (>=3.3) vs 'use_auth_token' (<3.3).
+            sig = inspect.signature(PyannotePipeline.from_pretrained)
+            if "token" in sig.parameters:
+                pipeline_kwargs["token"] = hf_auth_token
+            else:
+                pipeline_kwargs["use_auth_token"] = hf_auth_token
         _Diarization_Service._pipeline = PyannotePipeline.from_pretrained(
             "pyannote/speaker-diarization-3.1", **pipeline_kwargs
         )

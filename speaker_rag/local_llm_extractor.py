@@ -338,10 +338,11 @@ class LocalLLMExtractor:
                 add_generation_prompt=True,
             )
 
-        # Stop as soon as Qwen finishes the JSON object — guards against
-        # over-generation prose after the closing brace. The triple-newline
-        # stop catches the common "explanation paragraph" tail.
-        stop_seqs = ["\n\n\n", "```"]
+        # Stop only on a markdown code fence. The previous "\n\n\n" guard
+        # truncated long JSON arrays mid-output — Qwen3 emits triple newlines
+        # between entries on long meetings, producing invalid JSON and zero
+        # extracted entities.
+        stop_seqs = ["```"]
         if stop:
             stop_seqs.extend(stop)
 
@@ -399,9 +400,12 @@ class LocalLLMExtractor:
             return []
         user_prompt = self._format_dialogue(utterances)
         try:
-            # Entity JSON output is rarely >600 tokens in practice; cap at 768
-            # to bound the worst case without leaving headroom for prose tails.
-            raw = self._generate(_ENTITY_SYSTEM_PROMPT, user_prompt, max_new_tokens=768)
+            # A meeting-sized dialogue with 10+ speakers can legitimately
+            # produce 30-60 entities; at ~60 tokens each plus the JSON
+            # scaffolding that's ~3-4k output tokens. The previous 768 cap
+            # truncated mid-array on real meetings, breaking JSON parsing
+            # and returning zero entities.
+            raw = self._generate(_ENTITY_SYSTEM_PROMPT, user_prompt, max_new_tokens=4096)
         except Exception as e:
             print(f"[LocalLLMExtractor] entity generate failed: {e}")
             return []

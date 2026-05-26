@@ -1041,6 +1041,161 @@ class GraphService:
         else:
             self._g.add_edge(src, tgt, relation="FACT", facts=[fact])
 
+    def _extract_entities_window(
+        self,
+        utterance_ids: List[str],
+        dlg_id: str,
+        all_speakers: set,
+        stats: Dict[str, int],
+    ) -> None:
+        """Run the two-pass extraction (entities then relations) on a single
+        window of utterance ids belonging to one dialogue.
+
+        Mutates the graph in place and updates `stats` counters. Clears the
+        `entities_pending` flag on every utterance in the window once Pass 1
+        has run (or failed) so the same window is never reprocessed.
+        """
+        # Build window payload, recording 1-indexed -> chroma_id
+        payload: List[Dict[str, Any]] = []
+        idx_to_chroma: Dict[int, str] = {}
+        speaker_set: set = set()
+        for i, uid in enumerate(utterance_ids, start=1):
+            ud = self._g.nodes[uid]
+            speaker = next(
+                (p for p in self._g.predecessors(uid)
+                 if self._g.nodes.get(p, {}).get("type") == "speaker"),
+                "Unknown",
+            )
+            payload.append({
+                "speaker": speaker.capitalize() if speaker else "Unknown",
+                "text": ud.get("text", ""),
+            })
+            idx_to_chroma[i] = uid
+            if speaker and speaker != "Unknown":
+                speaker_set.add(speaker)
+
+        # --- Pass 1: entities ---
+        try:
+            entities = self._llm_extractor.extract_dialogue_entities(payload)
+        except Exception as e:
+            print(f"[GraphService] entity extraction failed for dialogue {dlg_id}: {e}")
+            stats["errors"] += 1
+            # Even on failure, clear the pending flag so we don't loop forever
+            for uid in utterance_ids:
+                self._g.nodes[uid].pop("entities_pending", None)
+                stats["utterances_extracted"] += 1
+            return
+
+        # name -> node_id mapping for the relation pass.
+        # Speakers take priority over entity nodes when names collide
+        # (e.g. extracted entity "Joey" should map to speaker node `joey`).
+        name_to_node: Dict[str, str] = {}
+        for spk in all_speakers:
+            name_to_node[spk.lower()] = spk
+
+        # Dialogue-context string for the LLM judge (so it can disambiguate
+        # ambiguous cosine matches with grounded text). Cap at ~1500 chars
+        # to keep judge input small.
+        dialogue_context = "\n".join(
+            f"[{i}] {u.get('speaker', '')}: {u.get('text', '')}"
+            for i, u in enumerate(payload, start=1)
+        )[:1500]
+
+        for ent in entities:
+            ent_name = ent["name"]
+            ent_type = ent["type"]
+            # If this entity name matches a known speaker (any dialogue),
+            # route mentions to the speaker node rather than creating a
+            # duplicate ent::PERSON::<name> entity.
+            speaker_match = next(
+                (s for s in all_speakers if s.lower() == ent_name.lower()),
+                None,
+            )
+            if speaker_match and ent_type == "PERSON":
+                target_node = speaker_match
+            else:
+                target_node = self._upsert_entity(
+                    name=ent_name,
+                    etype=ent_type,
+                    description=ent["description"],
+                    stats=stats,
+                    dialogue_context=dialogue_context,
+                )
+            # MENTIONS edges
+            for utt_idx in ent["mentioned_in"]:
+                chroma_id = idx_to_chroma.get(utt_idx)
+                if chroma_id and not self._g.has_edge(chroma_id, target_node):
+                    self._g.add_edge(
+                        chroma_id, target_node, relation="MENTIONS", label=ent_type
+                    )
+            name_to_node[ent_name.lower()] = target_node
+
+        # Clear entities_pending on every utterance now that pass 1 ran
+        for uid in utterance_ids:
+            self._g.nodes[uid].pop("entities_pending", None)
+            stats["utterances_extracted"] += 1
+
+        # --- Pass 2: relations (Sonnet) ---
+        relation_entity_list: List[Dict[str, Any]] = []
+        seen_lc: set = set()
+        for ent in entities:
+            key = ent["name"].lower()
+            if key in seen_lc:
+                continue
+            seen_lc.add(key)
+            relation_entity_list.append({
+                "name": ent["name"],
+                "type": ent["type"],
+                "description": ent["description"],
+            })
+        for spk in speaker_set:
+            if spk.lower() in seen_lc:
+                continue
+            seen_lc.add(spk.lower())
+            relation_entity_list.append({
+                "name": spk.capitalize(),
+                "type": "PERSON",
+                "description": "Speaker in this dialogue.",
+            })
+
+        if len(relation_entity_list) >= 2:
+            try:
+                relations = self._llm_extractor.extract_relations(
+                    payload, relation_entity_list
+                )
+            except Exception as e:
+                print(f"[GraphService] relation extraction failed for dialogue {dlg_id}: {e}")
+                stats["errors"] += 1
+                relations = []
+
+            for rel in relations:
+                src_node = name_to_node.get(rel["source"].lower())
+                tgt_node = name_to_node.get(rel["target"].lower())
+                if not src_node or not tgt_node or src_node == tgt_node:
+                    continue
+                src_chromas = [
+                    idx_to_chroma[i] for i in rel["source_utterances"]
+                    if i in idx_to_chroma
+                ]
+                extracted_at = _now_iso()
+                fact = {
+                    "type": rel["type"],
+                    "fact": rel["fact"],
+                    "source_utterances": src_chromas,
+                    "dialogue_id": str(dlg_id) if dlg_id != "_no_dialogue" else "",
+                    "extracted_at": extracted_at,
+                    "valid_from": extracted_at,
+                    "valid_to": None,
+                }
+                self._add_fact(
+                    src_node,
+                    tgt_node,
+                    fact,
+                    dialogue_context=dialogue_context,
+                    stats=stats,
+                )
+                stats["relations_added"] += 1
+
     def extract_pending_entities(self) -> Dict[str, int]:
         """Two-pass LLM extraction over utterances marked entities_pending.
 
@@ -1089,152 +1244,43 @@ class GraphService:
         if not buckets:
             return stats
 
+        # Chunking guard for very long dialogues. A meeting-length dialogue
+        # (e.g. 224 utterances under one dialogue_id) overflows the local
+        # model's 32K context when sent as one prompt, producing truncated
+        # JSON and zero entities. When a dialogue exceeds CHUNK_SIZE we run
+        # the two-pass extraction over sliding windows and let the
+        # EntityResolver merge duplicates across windows. Shorter dialogues
+        # (MELD-style) are sent as a single call exactly as before.
+        # The dialogue_id is preserved across all windows — chunking is a
+        # backend batching detail, not a re-definition of "conversation."
+        CHUNK_SIZE = 40
+
         for dlg_id, utterance_ids in buckets.items():
             # Sort by utterance_id when present so the LLM sees turns in order
             utterance_ids.sort(
                 key=lambda x: self._g.nodes[x].get("utterance_id", 0)
             )
 
-            # Build dialogue payload, recording 1-indexed -> chroma_id
-            payload: List[Dict[str, Any]] = []
-            idx_to_chroma: Dict[int, str] = {}
-            speaker_set: set = set()
-            for i, uid in enumerate(utterance_ids, start=1):
-                ud = self._g.nodes[uid]
-                speaker = next(
-                    (p for p in self._g.predecessors(uid)
-                     if self._g.nodes.get(p, {}).get("type") == "speaker"),
-                    "Unknown",
+            if len(utterance_ids) <= CHUNK_SIZE:
+                windows = [utterance_ids]
+            else:
+                windows = [
+                    utterance_ids[i : i + CHUNK_SIZE]
+                    for i in range(0, len(utterance_ids), CHUNK_SIZE)
+                ]
+                print(
+                    f"[GraphService] Dialogue {dlg_id}: {len(utterance_ids)} "
+                    f"utterances → splitting into {len(windows)} windows of "
+                    f"≤{CHUNK_SIZE} for LLM extraction."
                 )
-                payload.append({
-                    "speaker": speaker.capitalize() if speaker else "Unknown",
-                    "text": ud.get("text", ""),
-                })
-                idx_to_chroma[i] = uid
-                if speaker and speaker != "Unknown":
-                    speaker_set.add(speaker)
 
-            # --- Pass 1: entities ---
-            try:
-                entities = self._llm_extractor.extract_dialogue_entities(payload)
-            except Exception as e:
-                print(f"[GraphService] entity extraction failed for dialogue {dlg_id}: {e}")
-                stats["errors"] += 1
-                # Even on failure, clear the pending flag so we don't loop forever
-                for uid in utterance_ids:
-                    self._g.nodes[uid].pop("entities_pending", None)
-                    stats["utterances_extracted"] += 1
-                continue
-
-            # name -> node_id mapping for the relation pass.
-            # Speakers take priority over entity nodes when names collide
-            # (e.g. extracted entity "Joey" should map to speaker node `joey`).
-            name_to_node: Dict[str, str] = {}
-            for spk in all_speakers:
-                name_to_node[spk.lower()] = spk
-
-            # Dialogue-context string for the LLM judge (so it can disambiguate
-            # ambiguous cosine matches with grounded text). Cap at ~1500 chars
-            # to keep judge input small.
-            dialogue_context = "\n".join(
-                f"[{i}] {u.get('speaker', '')}: {u.get('text', '')}"
-                for i, u in enumerate(payload, start=1)
-            )[:1500]
-
-            for ent in entities:
-                ent_name = ent["name"]
-                ent_type = ent["type"]
-                # If this entity name matches a known speaker (any dialogue),
-                # route mentions to the speaker node rather than creating a
-                # duplicate ent::PERSON::<name> entity.
-                speaker_match = next(
-                    (s for s in all_speakers if s.lower() == ent_name.lower()),
-                    None,
+            for window in windows:
+                self._extract_entities_window(
+                    utterance_ids=window,
+                    dlg_id=dlg_id,
+                    all_speakers=all_speakers,
+                    stats=stats,
                 )
-                if speaker_match and ent_type == "PERSON":
-                    target_node = speaker_match
-                else:
-                    target_node = self._upsert_entity(
-                        name=ent_name,
-                        etype=ent_type,
-                        description=ent["description"],
-                        stats=stats,
-                        dialogue_context=dialogue_context,
-                    )
-                # MENTIONS edges
-                for utt_idx in ent["mentioned_in"]:
-                    chroma_id = idx_to_chroma.get(utt_idx)
-                    if chroma_id and not self._g.has_edge(chroma_id, target_node):
-                        self._g.add_edge(
-                            chroma_id, target_node, relation="MENTIONS", label=ent_type
-                        )
-                name_to_node[ent_name.lower()] = target_node
-
-            # Clear entities_pending on every utterance now that pass 1 ran
-            for uid in utterance_ids:
-                self._g.nodes[uid].pop("entities_pending", None)
-                stats["utterances_extracted"] += 1
-
-            # --- Pass 2: relations (Sonnet) ---
-            relation_entity_list: List[Dict[str, Any]] = []
-            seen_lc: set = set()
-            for ent in entities:
-                key = ent["name"].lower()
-                if key in seen_lc:
-                    continue
-                seen_lc.add(key)
-                relation_entity_list.append({
-                    "name": ent["name"],
-                    "type": ent["type"],
-                    "description": ent["description"],
-                })
-            for spk in speaker_set:
-                if spk.lower() in seen_lc:
-                    continue
-                seen_lc.add(spk.lower())
-                relation_entity_list.append({
-                    "name": spk.capitalize(),
-                    "type": "PERSON",
-                    "description": "Speaker in this dialogue.",
-                })
-
-            if len(relation_entity_list) >= 2:
-                try:
-                    relations = self._llm_extractor.extract_relations(
-                        payload, relation_entity_list
-                    )
-                except Exception as e:
-                    print(f"[GraphService] relation extraction failed for dialogue {dlg_id}: {e}")
-                    stats["errors"] += 1
-                    relations = []
-
-                for rel in relations:
-                    src_node = name_to_node.get(rel["source"].lower())
-                    tgt_node = name_to_node.get(rel["target"].lower())
-                    if not src_node or not tgt_node or src_node == tgt_node:
-                        continue
-                    src_chromas = [
-                        idx_to_chroma[i] for i in rel["source_utterances"]
-                        if i in idx_to_chroma
-                    ]
-                    extracted_at = _now_iso()
-                    fact = {
-                        "type": rel["type"],
-                        "fact": rel["fact"],
-                        "source_utterances": src_chromas,
-                        "dialogue_id": str(dlg_id) if dlg_id != "_no_dialogue" else "",
-                        "extracted_at": extracted_at,
-                        "valid_from": extracted_at,
-                        "valid_to": None,
-                    }
-                    self._add_fact(
-                        src_node,
-                        tgt_node,
-                        fact,
-                        dialogue_context=dialogue_context,
-                        stats=stats,
-                    )
-                    stats["relations_added"] += 1
 
             stats["dialogues_processed"] += 1
 

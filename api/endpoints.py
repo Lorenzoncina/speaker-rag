@@ -15,12 +15,109 @@ from speaker_rag.llm_extractor import LLMExtractor
 from speaker_rag.local_llm_extractor import LocalLLMExtractor
 
 app = FastAPI(
-    title="Speaker RAG API", 
+    title="Speaker RAG API",
     description="An LLM-powered RAG system for analyzing and querying speaker audio.",
     version="1.1.0"
 )
 
 rag_system = None
+
+
+def _patch_torchaudio_compat():
+    """Patch torchaudio APIs removed in torchaudio >= 2.5 / 2.7 that pyannote still uses.
+
+    Safe to call multiple times — every patch is idempotent (guarded by hasattr /
+    _compat_wrapped). Must be called before the pyannote pipeline is first imported
+    or loaded, which happens lazily on the first /rag/index_conversation request.
+    """
+    try:
+        import torchaudio
+
+        # 1. torchaudio.AudioMetaData — removed in torchaudio >= 2.7.
+        if not hasattr(torchaudio, "AudioMetaData"):
+            _patched = False
+            for modpath in ("torchaudio._backend.common", "torchaudio.backend.common"):
+                try:
+                    mod = __import__(modpath, fromlist=["AudioMetaData"])
+                    torchaudio.AudioMetaData = mod.AudioMetaData
+                    _patched = True
+                    break
+                except (ImportError, AttributeError):
+                    continue
+            if not _patched:
+                class _AudioMetaDataStub:
+                    pass
+                torchaudio.AudioMetaData = _AudioMetaDataStub
+
+        # 2. torchaudio.list_audio_backends — deprecated in 2.0, removed in 2.5+.
+        if not hasattr(torchaudio, "list_audio_backends"):
+            def _list_audio_backends_compat():
+                names = []
+                for name in ("soundfile", "sox_io", "ffmpeg"):
+                    try:
+                        __import__(name)
+                        names.append(name)
+                    except ImportError:
+                        continue
+                return names or ["soundfile"]
+            torchaudio.list_audio_backends = _list_audio_backends_compat
+
+        # 3. torchaudio.get_audio_backend / set_audio_backend — same removal.
+        if not hasattr(torchaudio, "get_audio_backend"):
+            torchaudio.get_audio_backend = lambda: "soundfile"
+        if not hasattr(torchaudio, "set_audio_backend"):
+            torchaudio.set_audio_backend = lambda *_args, **_kwargs: None
+
+        # 4. torchaudio.load / info / save — wrap to force backend="soundfile" or
+        #    install soundfile-based stubs when the attribute is gone entirely.
+        def _make_wrapper(orig_fn):
+            def _wrapped(*args, **kwargs):
+                if "backend" not in kwargs:
+                    kwargs["backend"] = "soundfile"
+                return orig_fn(*args, **kwargs)
+            _wrapped._compat_wrapped = True
+            return _wrapped
+
+        def _info_stub(uri, *_args, **_kwargs):
+            import soundfile as sf
+            with sf.SoundFile(str(uri)) as f:
+                meta = torchaudio.AudioMetaData()
+                meta.sample_rate     = int(f.samplerate)
+                meta.num_frames      = int(len(f))
+                meta.num_channels    = int(f.channels)
+                meta.bits_per_sample = 0
+                meta.encoding        = str(f.subtype or "PCM_S")
+                return meta
+        _info_stub._compat_wrapped = True
+
+        def _load_stub(uri, *_args, **kwargs):
+            import soundfile as sf
+            import torch as _torch
+            data, sr = sf.read(str(uri), always_2d=True, dtype="float32")
+            channels_first = kwargs.get("channels_first", True)
+            arr = data.T if channels_first else data
+            return _torch.from_numpy(arr).contiguous(), int(sr)
+        _load_stub._compat_wrapped = True
+
+        def _save_stub(uri, src, sample_rate, *_args, **kwargs):
+            import soundfile as sf
+            channels_first = kwargs.get("channels_first", True)
+            t = src.cpu().detach().numpy()
+            if channels_first:
+                t = t.T
+            sf.write(str(uri), t, int(sample_rate))
+        _save_stub._compat_wrapped = True
+
+        for _fn_name, _stub in (("load", _load_stub), ("info", _info_stub), ("save", _save_stub)):
+            _fn = getattr(torchaudio, _fn_name, None)
+            if _fn is None:
+                setattr(torchaudio, _fn_name, _stub)
+            elif not getattr(_fn, "_compat_wrapped", False):
+                setattr(torchaudio, _fn_name, _make_wrapper(_fn))
+
+    except Exception:
+        pass
+
 
 @app.on_event("startup")
 def startup_event():
@@ -28,6 +125,8 @@ def startup_event():
     device = os.environ.get("DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
     hf_auth_token = os.environ.get("HF_AUTH_TOKEN", None)
     print(f"Starting Speaker RAG API on device: {device}")
+
+    _patch_torchaudio_compat()
 
     rag_system = SpeakerRAG(
         chroma_dir="./enrolled_data/chroma",
@@ -1198,103 +1297,8 @@ def admin_reload_diarization(req: ReloadDiarizationRequest):
     if not token:
         return JSONResponse(status_code=400, content={"error": "hf_auth_token is required"})
 
-    # Compatibility shims: pyannote.audio 4.x calls several torchaudio APIs
-    # that were removed in torchaudio >= 2.5 / 2.7. Patch the module BEFORE
-    # we trigger the pipeline build so pyannote finds the attributes it expects.
-    try:
-        import torchaudio
-
-        # 1. torchaudio.AudioMetaData — removed in torchaudio >= 2.7.
-        if not hasattr(torchaudio, "AudioMetaData"):
-            _patched = False
-            for modpath in ("torchaudio._backend.common", "torchaudio.backend.common"):
-                try:
-                    mod = __import__(modpath, fromlist=["AudioMetaData"])
-                    torchaudio.AudioMetaData = mod.AudioMetaData
-                    _patched = True
-                    break
-                except (ImportError, AttributeError):
-                    continue
-            if not _patched:
-                class _AudioMetaDataStub:
-                    pass
-                torchaudio.AudioMetaData = _AudioMetaDataStub
-
-        # 2. torchaudio.list_audio_backends — deprecated in 2.0, removed in 2.5+.
-        # pyannote uses it to probe which backends are available; the new
-        # backend layer always has soundfile, so reporting just that is safe.
-        if not hasattr(torchaudio, "list_audio_backends"):
-            def _list_audio_backends_compat():
-                names = []
-                for name in ("soundfile", "sox_io", "ffmpeg"):
-                    try:
-                        __import__(name)
-                        names.append(name)
-                    except ImportError:
-                        continue
-                return names or ["soundfile"]
-            torchaudio.list_audio_backends = _list_audio_backends_compat
-
-        # 3. torchaudio.get_audio_backend / set_audio_backend — same removal.
-        if not hasattr(torchaudio, "get_audio_backend"):
-            torchaudio.get_audio_backend = lambda: "soundfile"
-        if not hasattr(torchaudio, "set_audio_backend"):
-            torchaudio.set_audio_backend = lambda *_args, **_kwargs: None
-
-        # 4. torchaudio.load / info / save:
-        #    - In torchaudio >= 2.7, when they exist, they default to a
-        #      torchcodec backend; wrap to force backend="soundfile".
-        #    - In some builds (e.g. torchaudio 2.8+), `info` is gone as a
-        #      top-level attribute. Install a soundfile-based stub so
-        #      pyannote's `torchaudio.info(path)` lookup keeps working.
-        def _make_wrapper(orig_fn):
-            def _wrapped(*args, **kwargs):
-                if "backend" not in kwargs:
-                    kwargs["backend"] = "soundfile"
-                return orig_fn(*args, **kwargs)
-            _wrapped._compat_wrapped = True
-            return _wrapped
-
-        def _info_stub(uri, *_args, **_kwargs):
-            import soundfile as sf
-            with sf.SoundFile(str(uri)) as f:
-                meta = torchaudio.AudioMetaData()
-                meta.sample_rate     = int(f.samplerate)
-                meta.num_frames      = int(len(f))
-                meta.num_channels    = int(f.channels)
-                meta.bits_per_sample = 0
-                meta.encoding        = str(f.subtype or "PCM_S")
-                return meta
-        _info_stub._compat_wrapped = True
-
-        def _load_stub(uri, *_args, **kwargs):
-            import soundfile as sf
-            import torch as _torch
-            data, sr = sf.read(str(uri), always_2d=True, dtype="float32")
-            channels_first = kwargs.get("channels_first", True)
-            arr = data.T if channels_first else data
-            return _torch.from_numpy(arr).contiguous(), int(sr)
-        _load_stub._compat_wrapped = True
-
-        def _save_stub(uri, src, sample_rate, *_args, **kwargs):
-            import soundfile as sf
-            channels_first = kwargs.get("channels_first", True)
-            t = src.cpu().detach().numpy()
-            if channels_first:
-                t = t.T
-            sf.write(str(uri), t, int(sample_rate))
-        _save_stub._compat_wrapped = True
-
-        for _fn_name, _stub in (("load", _load_stub), ("info", _info_stub), ("save", _save_stub)):
-            _fn = getattr(torchaudio, _fn_name, None)
-            if _fn is None:
-                # Attribute is gone — install a soundfile-based stub.
-                setattr(torchaudio, _fn_name, _stub)
-            elif not getattr(_fn, "_compat_wrapped", False):
-                # Attribute exists — wrap it to default backend="soundfile".
-                setattr(torchaudio, _fn_name, _make_wrapper(_fn))
-    except Exception:
-        pass
+    # Re-apply compat shims before forcing a pipeline rebuild (idempotent).
+    _patch_torchaudio_compat()
 
     # Wipe the module-level singleton so the factory rebuilds from scratch.
     from speaker_rag import diarization_service as diar_mod
