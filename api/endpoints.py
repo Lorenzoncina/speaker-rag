@@ -1215,66 +1215,6 @@ def admin_mlcslm_transcript(audio_path: str, audio_root: str, max_chars: int = 0
     }
 
 
-class SetEmotionModelRequest(BaseModel):
-    enabled: bool
-
-
-# Module-level stash for the emotion model + processor so we can restore them
-# after a /admin/emotion_model {enabled:false} call.
-_emotion_model_stash: Dict[str, Any] = {"model": None, "processor": None, "text_pipeline": None}
-
-
-@app.post("/admin/emotion_model", tags=["Admin"])
-def admin_set_emotion_model(req: SetEmotionModelRequest):
-    """Enable or disable the speech-emotion model in the running worker.
-
-    The English-only wav2vec2 emotion model triggers CUDA device-side asserts
-    on non-English audio (Korean / Japanese / etc.) because some classifier
-    weights are randomly initialized and produce out-of-range logits. For the
-    MLC-SLM benchmark we don't need emotion labels in retrieval, so the
-    cleanest fix is to skip the model entirely for this run.
-
-    Toggling is in-process and survives until the worker restarts (or a
-    matching call with enabled=true). After enabled=false:
-      - `_emotion_model` and `_emotion_processor` on the Identification_Service
-        singleton are nulled out; the emotion check at
-        identification_service.py:219 then sets acoustic_emotion="Unknown".
-      - The semantic text-emotion pipeline is also paused, since it depends
-        on Whisper output and shares the same crash-prone code paths.
-    """
-    if not rag_system:
-        return JSONResponse(status_code=500, content={"error": "Models are still loading."})
-
-    svc = rag_system.audio_service
-
-    if req.enabled:
-        # Restore from the stash (if we ever disabled).
-        if _emotion_model_stash["model"] is not None:
-            svc._emotion_model = _emotion_model_stash["model"]
-            svc._emotion_processor = _emotion_model_stash["processor"]
-            svc._text_emotion_pipeline = _emotion_model_stash["text_pipeline"]
-            _emotion_model_stash["model"] = None
-            _emotion_model_stash["processor"] = None
-            _emotion_model_stash["text_pipeline"] = None
-            return {"status": "success", "enabled": True, "restored": True}
-        # Nothing was disabled — report current state.
-        return {
-            "status": "success",
-            "enabled": svc._emotion_model is not None,
-            "restored": False,
-        }
-
-    # Disable: only stash if we haven't already.
-    if _emotion_model_stash["model"] is None and svc._emotion_model is not None:
-        _emotion_model_stash["model"] = svc._emotion_model
-        _emotion_model_stash["processor"] = svc._emotion_processor
-        _emotion_model_stash["text_pipeline"] = svc._text_emotion_pipeline
-    svc._emotion_model = None
-    svc._emotion_processor = None
-    svc._text_emotion_pipeline = None
-    return {"status": "success", "enabled": False}
-
-
 class ReloadDiarizationRequest(BaseModel):
     hf_auth_token: str  # the fresh HF token, with access to pyannote/speaker-diarization-3.1
 

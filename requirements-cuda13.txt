@@ -213,7 +213,13 @@ torchmetrics==1.8.0
 tqdm==4.67.1
 traitlets==5.14.3
 transformers==4.55.0
-vllm>=0.6.3
+# vLLM 0.10+ ships the Voxtral multimodal audio path. The 0.21.x build is
+# what we run in the container today; the lower bound is the lowest version
+# that exposes Voxtral via `LLM.chat()` with audio messages.
+vllm>=0.10.0
+# Mistral's tokenizer / audio processor for Voxtral. Pulled transitively by
+# vLLM in some builds, declared explicitly so a fresh image always has it.
+mistral-common>=1.5.0
 triton==3.6.0
 typer==0.16.0
 typing-inspection==0.4.1
