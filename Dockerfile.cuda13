@@ -16,10 +16,15 @@ RUN apt-get update && apt-get install -y \
 
 # 2. Install Application Requirements & Re-align Torchvision
 COPY requirements-cuda13.txt /app/
-# We add the extra-index-url so pip grabs CUDA-compatible wheels instead of PyPI CPU defaults,
-# and we force a reinstall of torchvision just in case a requirement overwrote it.
-RUN pip install --no-cache-dir -r requirements-cuda13.txt --extra-index-url https://download.pytorch.org/whl/cu130 && \
-    pip install --no-cache-dir --upgrade torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu130
+# We add the extra-index-url so pip grabs CUDA-compatible wheels instead of PyPI CPU defaults.
+# --use-deprecated=legacy-resolver: the requirements are ~fully pinned (==), but vLLM pulls a
+# handful of unbounded transitive deps (openai>=, mistral-common>=, opencv>=, ...). The 2025 pip
+# backtracking resolver re-explores those against the pinned set and dies with `resolution-too-deep`.
+# The legacy resolver is first-found-wins (no backtracking), so it installs the pinned set directly.
+# The second step pins the exact cu130 torch family (index-url, not extra) so the builds are
+# guaranteed CUDA 13 wheels; versions are fixed so it can't drift off torch 2.9.0 (vLLM's pin).
+RUN pip install --no-cache-dir --use-deprecated=legacy-resolver -r requirements-cuda13.txt --extra-index-url https://download.pytorch.org/whl/cu130 && \
+    pip install --no-cache-dir torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cu130
 
 # 3. Copy Application Code & Modules
 COPY speaker_rag/age_model/ /app/age_model/
