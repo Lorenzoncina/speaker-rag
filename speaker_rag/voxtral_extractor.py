@@ -292,10 +292,11 @@ class VoxtralExtractor:
         sampling_params = SamplingParams(
             temperature=0.0,  # greedy — single deterministic JSON per audio
             max_tokens=self._max_new_tokens,
-            # No "\n\n\n" stop — same lesson learned from LocalLLMExtractor:
-            # long transcriptions can contain blank lines and the stop would
-            # cut JSON mid-field. The "```" fence guard is safe.
-            stop=["```"],
+            # No stop strings: Voxtral routinely opens its JSON output with a
+            # ```json fence, so stop=["```"] cuts generation on the very first
+            # token (out_tok=1, finish=stop, empty text). `_strip_fences` in
+            # `_extract_json` removes any fences after the fact, so there is
+            # nothing to guard against here.
         )
 
         t0 = time.perf_counter()
