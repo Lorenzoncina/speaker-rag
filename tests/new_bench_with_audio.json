@@ -1,0 +1,486 @@
+[
+  {
+    "id": "identity_0000",
+    "q_type": "identity",
+    "question": "Who said: 'Reset button, reset button, where is there a reset button?'",
+    "ground_truth": "Phoebe",
+    "evidence": [
+      {
+        "dialogue_id": 482,
+        "utterance_id": 14,
+        "speaker": "Phoebe",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Reset button, reset button, where is there a reset button?"
+      }
+    ]
+  },
+  {
+    "id": "identity_0001",
+    "q_type": "identity",
+    "question": "Who said: 'That was a test. Good response. All right, full name.'?",
+    "ground_truth": "Joey",
+    "evidence": [
+      {
+        "dialogue_id": 418,
+        "utterance_id": 5,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "That was a test. Good response. All right, full name."
+      }
+    ]
+  },
+  {
+    "id": "emotion_grounded_0000",
+    "q_type": "emotion_grounded",
+    "question": "How was Phoebe feeling when she said 'I dont have time to convince you because hes only here for four hours, and Im gonna go see him!'?",
+    "ground_truth": "anger",
+    "evidence": [
+      {
+        "dialogue_id": 295,
+        "utterance_id": 16,
+        "speaker": "Phoebe",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "I dont have time to convince you because hes only here for four hours, and Im gonna go see him!"
+      }
+    ]
+  },
+  {
+    "id": "emotion_grounded_0001",
+    "q_type": "emotion_grounded",
+    "question": "What was Chandler's emotional state when they said 'Forty-five minutes? We have tickets to the'?",
+    "ground_truth": "surprise",
+    "evidence": [
+      {
+        "dialogue_id": 1019,
+        "utterance_id": 5,
+        "speaker": "Chandler",
+        "emotion": "surprise",
+        "sentiment": "negative",
+        "utterance": "Forty-five minutes? We have tickets to the"
+      }
+    ]
+  },
+  {
+    "id": "semantic_recall_0000",
+    "q_type": "semantic_recall",
+    "question": "What did Rachel say about Bobby?",
+    "ground_truth": "Rachel mentions Bobby in the context of a forced marriage and also speaks to him directly, suggesting they move aside to give others privacy.",
+    "evidence": [
+      {
+        "dialogue_id": 54,
+        "utterance_id": 1,
+        "speaker": "Rachel",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "So forcing her to marry Bobby is gonna make that happen?"
+      },
+      {
+        "dialogue_id": 54,
+        "utterance_id": 21,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Okay Bobby, why dont we just come over here and let them have a little moment."
+      }
+    ]
+  },
+  {
+    "id": "semantic_recall_0001",
+    "q_type": "semantic_recall",
+    "question": "What did Ross say about Ukrainian?",
+    "ground_truth": "Ross mentioned watching a Ukrainian film and also referred to someone hanging out with a Ukrainian kid in junior high.",
+    "evidence": [
+      {
+        "dialogue_id": 155,
+        "utterance_id": 7,
+        "speaker": "Ross",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Oh thats right. Well uh, would you be interested in seeing a Ukrainian film?"
+      },
+      {
+        "dialogue_id": 307,
+        "utterance_id": 4,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Is that why in junior high you were the only one that hung out with that Ukrainian kid?"
+      }
+    ]
+  },
+  {
+    "id": "graph_reasoning_0000",
+    "q_type": "graph_reasoning",
+    "question": "Chandler expressed sadness because he felt responsible for Jill leaving. Who else was present during this emotional moment?",
+    "ground_truth": "Joey,Rachel,Ross",
+    "evidence": [
+      {
+        "dialogue_id": 328,
+        "utterance_id": 0,
+        "speaker": "Jill",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "All right, Im leaving!"
+      },
+      {
+        "dialogue_id": 328,
+        "utterance_id": 1,
+        "speaker": "Jill",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Because Im not going to spend one more day with someone whose out to sabotage my every move."
+      },
+      {
+        "dialogue_id": 328,
+        "utterance_id": 2,
+        "speaker": "Jill",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Thats you Rachel!"
+      },
+      {
+        "dialogue_id": 328,
+        "utterance_id": 3,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Yeah, I got that."
+      },
+      {
+        "dialogue_id": 328,
+        "utterance_id": 4,
+        "speaker": "Jill",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "And you! I throw myself at you and you say no, how gay are you?"
+      },
+      {
+        "dialogue_id": 328,
+        "utterance_id": 5,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "You take care Jill."
+      },
+      {
+        "dialogue_id": 328,
+        "utterance_id": 6,
+        "speaker": "Jill",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Okay, see ya!"
+      },
+      {
+        "dialogue_id": 328,
+        "utterance_id": 7,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Bye-bye"
+      },
+      {
+        "dialogue_id": 328,
+        "utterance_id": 8,
+        "speaker": "Chandler",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "I-I cant believe Jills gone.  I cant help it, I opened a gate."
+      }
+    ]
+  },
+  {
+    "id": "graph_reasoning_0001",
+    "q_type": "graph_reasoning",
+    "question": "Chandler got upset because a joke about being a grandmother didn't land as intended. Who else was present during this conversation?",
+    "ground_truth": "Joey,Monica,Rachel,Ross",
+    "evidence": [
+      {
+        "dialogue_id": 464,
+        "utterance_id": 0,
+        "speaker": "Tag",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "This ones from me."
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 1,
+        "speaker": "Rachel",
+        "emotion": "surprise",
+        "sentiment": "positive",
+        "utterance": "Ahh!"
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 2,
+        "speaker": "Tag",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "It wasnt on your list, but hopefully youll think its really fun."
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 3,
+        "speaker": "Rachel",
+        "emotion": "surprise",
+        "sentiment": "positive",
+        "utterance": "A scooter!"
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 4,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Stick to the list. Always stick to the list."
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 5,
+        "speaker": "Rachel",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "No! No-no, I love it. Thank you."
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 6,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Okay, open ours next. Open ours next!"
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 7,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Okay."
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 8,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Now that youre a couple, we dont get two presents from you guys?"
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 9,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "For my last birthday you gave me a"
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 10,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Okay."
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 11,
+        "speaker": "Rachel",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Happy birthday Grandma!"
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 12,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Its better to be over the hill  then buried under it."
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 13,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "All our love Monica and Chandler."
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 14,
+        "speaker": "Rachel",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Thats funny, yeah!"
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 15,
+        "speaker": "Chandler",
+        "emotion": "surprise",
+        "sentiment": "negative",
+        "utterance": "No-no-no-no! That was the joke!"
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 16,
+        "speaker": "Rachel",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "No, I know! I get it! Its funny!"
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 17,
+        "speaker": "Chandler",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "No, because youre not a grandmother!"
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 18,
+        "speaker": "Rachel",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "No I know, because to be a grandmother you have to be married and have children and I dont have any of those things."
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 19,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Thats why its so funny."
+      },
+      {
+        "dialogue_id": 464,
+        "utterance_id": 20,
+        "speaker": "Monica",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "All you had to do was buy the card!"
+      }
+    ]
+  },
+  {
+    "id": "emotion_profile_0000",
+    "q_type": "emotion_profile",
+    "question": "How often does Phoebe express anger throughout the corpus?",
+    "ground_truth": "Phoebe expresses anger 172 times.",
+    "evidence": [
+      {
+        "dialogue_id": 10,
+        "utterance_id": 0,
+        "speaker": "Phoebe",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Nobody!"
+      },
+      {
+        "dialogue_id": 10,
+        "utterance_id": 1,
+        "speaker": "Phoebe",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Nobody respects the bucket!"
+      }
+    ]
+  },
+  {
+    "id": "emotion_profile_0001",
+    "q_type": "emotion_profile",
+    "question": "How many times does Chandler express fear?",
+    "ground_truth": "54",
+    "evidence": [
+      {
+        "dialogue_id": 0,
+        "utterance_id": 10,
+        "speaker": "Chandler",
+        "emotion": "fear",
+        "sentiment": "negative",
+        "utterance": "No dont I beg of you!"
+      },
+      {
+        "dialogue_id": 33,
+        "utterance_id": 0,
+        "speaker": "Chandler",
+        "emotion": "fear",
+        "sentiment": "negative",
+        "utterance": "Will you marry me?"
+      }
+    ]
+  },
+  {
+    "id": "audio_identity_0000",
+    "q_type": "audio_identity",
+    "question": "Identify the speaker in the audio clip. What did they say about Thanksgiving?",
+    "ground_truth": "Speaker: Joey. About Thanksgiving: Joey expressed strong feelings about Thanksgiving, mentioning his 'Thanksgiving pants' and emphasizing the importance of having turkey on Thanksgiving, comparing it to the Fourth of July needing apple pie.",
+    "audio_path": "/home/lorenzo-concina/development/datasets/MELD.Raw/dev_splits_complete/dia94_utt4.wav",
+    "audio_file": "dia94_utt4.wav",
+    "evidence": [
+      {
+        "dialogue_id": 247,
+        "utterance_id": 2,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Not now! These are my Thanksgiving pants!"
+      },
+      {
+        "dialogue_id": 249,
+        "utterance_id": 3,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "But you gotta have turkey on Thanksgiving!"
+      },
+      {
+        "dialogue_id": 249,
+        "utterance_id": 4,
+        "speaker": "Joey",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "I mean, Thanksgiving with no turkey is like-like Fourth of July with no apple pie!"
+      }
+    ]
+  },
+  {
+    "id": "audio_identity_0001",
+    "q_type": "audio_identity",
+    "question": "Who is the speaker in the attached audio clip, and what did they say about Tribbiani?",
+    "ground_truth": "Speaker: Rachel. About Tribbiani: Rachel expressed surprise and excitement about being invited to Joey Tribbiani's apartment, questioning if he does this often with girls. She was also excited about his role in Mac and C.H.E.E.S.E.",
+    "audio_path": "/home/lorenzo-concina/development/datasets/MELD.Raw/dev_splits_complete/dia107_utt1.wav",
+    "audio_file": "dia107_utt1.wav",
+    "evidence": [
+      {
+        "dialogue_id": 528,
+        "utterance_id": 1,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Okay, Joey Tribbiani invited me back to his apartment, now does he do this with a lot of girls?"
+      },
+      {
+        "dialogue_id": 528,
+        "utterance_id": 3,
+        "speaker": "Rachel",
+        "emotion": "surprise",
+        "sentiment": "positive",
+        "utterance": "Ohh! And Im one of them!! Wow! Oh, I just cannot believe this! I mean, Joey Tribbiani!"
+      },
+      {
+        "dialogue_id": 679,
+        "utterance_id": 8,
+        "speaker": "Rachel",
+        "emotion": "surprise",
+        "sentiment": "positive",
+        "utterance": "Oh my God! Its Joey Tribbiani of Mac and C.H.E.E.S.E.!!!!!!!"
+      }
+    ]
+  }
+]

@@ -1,0 +1,2571 @@
+[
+  {
+    "id": "identity.direct_0000",
+    "q_type": "identity",
+    "subtype": "direct",
+    "answer_format": "mcq_single",
+    "question": "In a discussion about a mishap with a doctor's skepticism, who said: \"Well, I'm sorry Joe. I didn't think the doctor was gonna buy that it just *fell* out of the socket.\"?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": "Chandler",
+    "_tests": "Speaker NER on the question + semantic match of the quoted text against the speaker-filtered Chroma collection.",
+    "evidence": [
+      {
+        "dialogue_id": 356,
+        "utterance_id": 10,
+        "speaker": "Chandler",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Well, I'm sorry Joe. I didn't think the doctor was gonna buy that it just *fell* out of the socket."
+      }
+    ]
+  },
+  {
+    "id": "identity.direct_0001",
+    "q_type": "identity",
+    "subtype": "direct",
+    "answer_format": "mcq_single",
+    "question": "Identify the person who said: 'Yeah, apparently theyre turning it into some kinda coffee place.'",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": "Monica",
+    "_tests": "Speaker NER on the question + semantic match of the quoted text against the speaker-filtered Chroma collection.",
+    "evidence": [
+      {
+        "dialogue_id": 2,
+        "utterance_id": 5,
+        "speaker": "Monica",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Yeah, apparently theyre turning it into some kinda coffee place."
+      }
+    ]
+  },
+  {
+    "id": "identity.direct_0002",
+    "q_type": "identity",
+    "subtype": "direct",
+    "answer_format": "mcq_single",
+    "question": "Who said: \"Damn! I thought that was going to be romantic as hell!\"?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": "Ross",
+    "_tests": "Speaker NER on the question + semantic match of the quoted text against the speaker-filtered Chroma collection.",
+    "evidence": [
+      {
+        "dialogue_id": 919,
+        "utterance_id": 0,
+        "speaker": "Ross",
+        "emotion": "surprise",
+        "sentiment": "negative",
+        "utterance": "Damn! I thought that was going to be romantic as hell!"
+      }
+    ]
+  },
+  {
+    "id": "identity.direct_0003",
+    "q_type": "identity",
+    "subtype": "direct",
+    "answer_format": "mcq_single",
+    "question": "Who said: \"Nothing! It's over! Dammit! This is regularly scheduled programming!\"?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": "Chandler",
+    "_tests": "Speaker NER on the question + semantic match of the quoted text against the speaker-filtered Chroma collection.",
+    "evidence": [
+      {
+        "dialogue_id": 770,
+        "utterance_id": 7,
+        "speaker": "Chandler",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Nothing! It's over! Dammit! This is regularly scheduled programming!"
+      }
+    ]
+  },
+  {
+    "id": "identity.direct_0004",
+    "q_type": "identity",
+    "subtype": "direct",
+    "answer_format": "mcq_single",
+    "question": "In a moment of quirky revelation, who admitted: \"That is so weird, because every time I go to the dentist, I look down the hygienist’s blouse.\"?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": "Chandler",
+    "_tests": "Speaker NER on the question + semantic match of the quoted text against the speaker-filtered Chroma collection.",
+    "evidence": [
+      {
+        "dialogue_id": 358,
+        "utterance_id": 10,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "That is so weird, because every time I go to the dentist, I look down the hygienists blouse."
+      }
+    ]
+  },
+  {
+    "id": "identity.pair_attribution_0000",
+    "q_type": "identity",
+    "subtype": "pair_attribution",
+    "answer_format": "mcq_multi",
+    "question": "Out of the six main friends, which 2 mentioned 'Howdy'?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": [
+      "Joey",
+      "Monica"
+    ],
+    "_tests": "Multi-speaker semantic retrieval ($in speaker filter). Only ['Joey', 'Monica'] mention 'Howdy'; system must not fabricate others.",
+    "evidence": [
+      {
+        "dialogue_id": 945,
+        "utterance_id": 3,
+        "speaker": "Monica",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Gee, I dont know Rach. Order up!! I got a Yentel soup, a James Beans, and a Howdy hold the Dowdy!"
+      },
+      {
+        "dialogue_id": 950,
+        "utterance_id": 10,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Howdy partner!"
+      }
+    ]
+  },
+  {
+    "id": "identity.pair_attribution_0001",
+    "q_type": "identity",
+    "subtype": "pair_attribution",
+    "answer_format": "mcq_multi",
+    "question": "In the series, 'Mike' was mentioned by 2 of the main characters. Who were they?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": [
+      "Monica",
+      "Phoebe"
+    ],
+    "_tests": "Multi-speaker semantic retrieval ($in speaker filter). Only ['Monica', 'Phoebe'] mention 'Mike'; system must not fabricate others.",
+    "evidence": [
+      {
+        "dialogue_id": 29,
+        "utterance_id": 0,
+        "speaker": "Monica",
+        "emotion": "surprise",
+        "sentiment": "positive",
+        "utterance": "Wow! That Mike thing was interesting! I don't know what's gonna happen with Phoebe and David."
+      },
+      {
+        "dialogue_id": 29,
+        "utterance_id": 10,
+        "speaker": "Monica",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "They've only been going out for a few weeks and Phoebe is completely hung up on Mike!"
+      },
+      {
+        "dialogue_id": 240,
+        "utterance_id": 6,
+        "speaker": "Phoebe",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Oh, now... tomorrow do you guys wanna share a cab to the airport or should Mike and I just meet you there."
+      },
+      {
+        "dialogue_id": 241,
+        "utterance_id": 0,
+        "speaker": "Phoebe",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Oh... Mike's sister just invited me to a party tonight, he's gonna be there."
+      }
+    ]
+  },
+  {
+    "id": "identity.pair_attribution_0002",
+    "q_type": "identity",
+    "subtype": "pair_attribution",
+    "answer_format": "mcq_multi",
+    "question": "Identify the 2 out of the six main friends who mentioned 'Chan' during the conversations.",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": [
+      "Chandler",
+      "Monica"
+    ],
+    "_tests": "Multi-speaker semantic retrieval ($in speaker filter). Only ['Chandler', 'Monica'] mention 'Chan'; system must not fabricate others.",
+    "evidence": [
+      {
+        "dialogue_id": 527,
+        "utterance_id": 4,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Yeah, she couldn't live without the Chan Love."
+      },
+      {
+        "dialogue_id": 749,
+        "utterance_id": 0,
+        "speaker": "Monica",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "A new pair of shoes for the Chan-Chan man!  Yes!"
+      }
+    ]
+  },
+  {
+    "id": "identity.pair_attribution_0003",
+    "q_type": "identity",
+    "subtype": "pair_attribution",
+    "answer_format": "mcq_multi",
+    "question": "'Joshua,' across the conversations, which two of the six main friends referred to?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": [
+      "Chandler",
+      "Rachel"
+    ],
+    "_tests": "Multi-speaker semantic retrieval ($in speaker filter). Only ['Chandler', 'Rachel'] mention 'Joshua'; system must not fabricate others.",
+    "evidence": [
+      {
+        "dialogue_id": 84,
+        "utterance_id": 6,
+        "speaker": "Rachel",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "Oh, wait, Joshua! Joshua!   Yeah, well, that oughta do it."
+      },
+      {
+        "dialogue_id": 89,
+        "utterance_id": 8,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Now, maybe I would have a problem with this if it wasnt for me and Joshua."
+      },
+      {
+        "dialogue_id": 409,
+        "utterance_id": 2,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Oh yeah?  Joshua, give me a call sometime, guys like you  never go out of stylewhat did you throw away?"
+      }
+    ]
+  },
+  {
+    "id": "identity.pair_attribution_0004",
+    "q_type": "identity",
+    "subtype": "pair_attribution",
+    "answer_format": "mcq_multi",
+    "question": "Which 2 of the six main friends mentioned 'Staten'?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": [
+      "Joey",
+      "Ross"
+    ],
+    "_tests": "Multi-speaker semantic retrieval ($in speaker filter). Only ['Joey', 'Ross'] mention 'Staten'; system must not fabricate others.",
+    "evidence": [
+      {
+        "dialogue_id": 836,
+        "utterance_id": 0,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Hey Ross, is uh, is Staten Island really an island?"
+      },
+      {
+        "dialogue_id": 836,
+        "utterance_id": 1,
+        "speaker": "Ross",
+        "emotion": "surprise",
+        "sentiment": "positive",
+        "utterance": "Uh-huh, that's why they call it Staten"
+      }
+    ]
+  },
+  {
+    "id": "identity.cross_call_linking_0000",
+    "q_type": "identity",
+    "subtype": "cross_call_linking",
+    "answer_format": "mcq_single",
+    "question": "Did the same person say 'Uh, yeah, Ill take a coffee. Thanks, man.' and 'Hes right, even if its to say something complementary.'?",
+    "choices": [
+      "Yes, same speaker",
+      "No, different speakers"
+    ],
+    "ground_truth": "Yes, same speaker",
+    "_tests": "Cross-call speaker linking — union-find clustering of identity across separately enrolled conversations.",
+    "evidence": [
+      {
+        "dialogue_id": 933,
+        "utterance_id": 3,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Uh, yeah, Ill take a coffee. Thanks, man."
+      },
+      {
+        "dialogue_id": 302,
+        "utterance_id": 4,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Hes right, even if its to say something complementary."
+      }
+    ]
+  },
+  {
+    "id": "identity.cross_call_linking_0001",
+    "q_type": "identity",
+    "subtype": "cross_call_linking",
+    "answer_format": "mcq_single",
+    "question": "Is the individual who stated 'Did you tell him about my thquirt gun idea?' the same person who said 'I can't just walk away! I've put in four hours!'?",
+    "choices": [
+      "Yes, same speaker",
+      "No, different speakers"
+    ],
+    "ground_truth": "No, different speakers",
+    "_tests": "Cross-call speaker linking — union-find clustering of identity across separately enrolled conversations.",
+    "evidence": [
+      {
+        "dialogue_id": 799,
+        "utterance_id": 3,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Did you tell him about my thquirt gun idea?"
+      },
+      {
+        "dialogue_id": 451,
+        "utterance_id": 4,
+        "speaker": "Monica",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "I can't just walk away! I've put in four hours!"
+      }
+    ]
+  },
+  {
+    "id": "identity.cross_call_linking_0002",
+    "q_type": "identity",
+    "subtype": "cross_call_linking",
+    "answer_format": "mcq_single",
+    "question": "The speaker who said 'Set it down over there and then you can make a contribution!' — is that the same speaker who said 'Oh, youre such a gentleman.  Come on! Were going to my place!'?",
+    "choices": [
+      "Yes, same speaker",
+      "No, different speakers"
+    ],
+    "ground_truth": "Yes, same speaker",
+    "_tests": "Cross-call speaker linking — union-find clustering of identity across separately enrolled conversations.",
+    "evidence": [
+      {
+        "dialogue_id": 707,
+        "utterance_id": 11,
+        "speaker": "Phoebe",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Set it down over there and then you can make a contribution!"
+      },
+      {
+        "dialogue_id": 877,
+        "utterance_id": 4,
+        "speaker": "Phoebe",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Oh, youre such a gentleman.  Come on! Were going to my place!"
+      }
+    ]
+  },
+  {
+    "id": "identity.cross_call_linking_0003",
+    "q_type": "identity",
+    "subtype": "cross_call_linking",
+    "answer_format": "mcq_single",
+    "question": "Regarding the speaker who said 'I hang out with you guys, and he stars in a drag show in Vegas,' is this the same speaker who uttered 'Uh, yeah, Ill take a coffee. Thanks, man.'?",
+    "choices": [
+      "Yes, same speaker",
+      "No, different speakers"
+    ],
+    "ground_truth": "No, different speakers",
+    "_tests": "Cross-call speaker linking — union-find clustering of identity across separately enrolled conversations.",
+    "evidence": [
+      {
+        "dialogue_id": 933,
+        "utterance_id": 3,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Uh, yeah, Ill take a coffee. Thanks, man."
+      },
+      {
+        "dialogue_id": 82,
+        "utterance_id": 6,
+        "speaker": "Chandler",
+        "emotion": "disgust",
+        "sentiment": "negative",
+        "utterance": "I hang out with you guys, and he stars in a drag show in Vegas."
+      }
+    ]
+  },
+  {
+    "id": "identity.cross_call_linking_0004",
+    "q_type": "identity",
+    "subtype": "cross_call_linking",
+    "answer_format": "mcq_single",
+    "question": "Looking at the conversations, is the person who said 'And then, and then, you turn to me and say, Nah, lets just hang out at your place. Well, that was a nice move dumb ass.' the same person who said 'Hey, you wanna do Joey a favor, maybe you go out with Joey.'?",
+    "choices": [
+      "Yes, same speaker",
+      "No, different speakers"
+    ],
+    "ground_truth": "Yes, same speaker",
+    "_tests": "Cross-call speaker linking — union-find clustering of identity across separately enrolled conversations.",
+    "evidence": [
+      {
+        "dialogue_id": 447,
+        "utterance_id": 2,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "And then, and then, you turn to me and say, Nah, lets just hang out at your place. Well, that was a nice move dumb ass."
+      },
+      {
+        "dialogue_id": 427,
+        "utterance_id": 1,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Hey, you wanna do Joey a favor, maybe you go out with Joey."
+      }
+    ]
+  },
+  {
+    "id": "emotion.direct_attribution_0000",
+    "q_type": "emotion",
+    "subtype": "direct_attribution",
+    "answer_format": "mcq_single",
+    "question": "In a moment of frustration with a customer's suggestion, what emotion was Monica expressing when she said, 'Oh, some idiot customer put a suggestion in the suggestion box.'?",
+    "choices": [
+      "anger",
+      "disgust",
+      "fear",
+      "joy",
+      "neutral",
+      "sadness",
+      "surprise"
+    ],
+    "ground_truth": "anger",
+    "_tests": "Retrieval of acoustic_emotion / text_emotion metadata for the matching segment.",
+    "evidence": [
+      {
+        "dialogue_id": 542,
+        "utterance_id": 1,
+        "speaker": "Monica",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Oh, some idiot customer put a suggestion in the suggestion box."
+      }
+    ]
+  },
+  {
+    "id": "emotion.direct_attribution_0001",
+    "q_type": "emotion",
+    "subtype": "direct_attribution",
+    "answer_format": "mcq_single",
+    "question": "Identify the emotion Joey is expressing when he says 'Where are you going? The vicar won’t be home for hours.'",
+    "choices": [
+      "anger",
+      "disgust",
+      "fear",
+      "joy",
+      "neutral",
+      "sadness",
+      "surprise"
+    ],
+    "ground_truth": "joy",
+    "_tests": "Retrieval of acoustic_emotion / text_emotion metadata for the matching segment.",
+    "evidence": [
+      {
+        "dialogue_id": 1022,
+        "utterance_id": 5,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Where are you going? The vicar wont be home for hours."
+      }
+    ]
+  },
+  {
+    "id": "emotion.direct_attribution_0002",
+    "q_type": "emotion",
+    "subtype": "direct_attribution",
+    "answer_format": "mcq_single",
+    "question": "How was Joey feeling when he said, 'Pheebs, if this guy keeps closing down all of our favorite places, where are we gonna eat?!'?",
+    "choices": [
+      "anger",
+      "disgust",
+      "fear",
+      "joy",
+      "neutral",
+      "sadness",
+      "surprise"
+    ],
+    "ground_truth": "anger",
+    "_tests": "Retrieval of acoustic_emotion / text_emotion metadata for the matching segment.",
+    "evidence": [
+      {
+        "dialogue_id": 666,
+        "utterance_id": 4,
+        "speaker": "Joey",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Pheebs, if this guy keeps closing down all of our favorite places, where are we gonna eat?!"
+      }
+    ]
+  },
+  {
+    "id": "emotion.direct_attribution_0003",
+    "q_type": "emotion",
+    "subtype": "direct_attribution",
+    "answer_format": "mcq_single",
+    "question": "What emotion was Joey expressing when they said 'No, no wait, for get them, we got one, hard left.'?",
+    "choices": [
+      "anger",
+      "disgust",
+      "fear",
+      "joy",
+      "neutral",
+      "sadness",
+      "surprise"
+    ],
+    "ground_truth": "joy",
+    "_tests": "Retrieval of acoustic_emotion / text_emotion metadata for the matching segment.",
+    "evidence": [
+      {
+        "dialogue_id": 47,
+        "utterance_id": 7,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "No, no wait, for get them, we got one, hard left."
+      }
+    ]
+  },
+  {
+    "id": "emotion.direct_attribution_0004",
+    "q_type": "emotion",
+    "subtype": "direct_attribution",
+    "answer_format": "mcq_single",
+    "question": "When Joey said 'And I’m ashamed to say that I took it, I advised a fellow actor to play a role, homosexually,' what emotion was he expressing?",
+    "choices": [
+      "anger",
+      "disgust",
+      "fear",
+      "joy",
+      "neutral",
+      "sadness",
+      "surprise"
+    ],
+    "ground_truth": "sadness",
+    "_tests": "Retrieval of acoustic_emotion / text_emotion metadata for the matching segment.",
+    "evidence": [
+      {
+        "dialogue_id": 521,
+        "utterance_id": 2,
+        "speaker": "Joey",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "And Im ashamed to say that I took it, I advised a fellow actor to play a role, homosexually."
+      }
+    ]
+  },
+  {
+    "id": "emotion.sarcasm_detection_0000",
+    "q_type": "emotion",
+    "subtype": "sarcasm_detection",
+    "answer_format": "mcq_single",
+    "question": "The true feelings of the speaker, despite the positive words 'That’s a good idea, ‘Dear Janice have a Hubba-Bubba birthday’. I would like to get her something serious', what were they?",
+    "choices": [
+      "Amusement",
+      "Disgust",
+      "Excitement",
+      "Happiness"
+    ],
+    "ground_truth": "Disgust",
+    "_tests": "Acoustic vs text emotion DISAGREEMENT — words read positive, annotated emotion is 'disgust'. Only an audio-grounded system has the acoustic channel to catch it.",
+    "evidence": [
+      {
+        "dialogue_id": 901,
+        "utterance_id": 5,
+        "speaker": "Chandler",
+        "emotion": "disgust",
+        "sentiment": "negative",
+        "utterance": "Thats a good idea, Dear Janice have a Hubba-Bubba birthday. I would like to get her something serious."
+      }
+    ]
+  },
+  {
+    "id": "emotion.sarcasm_detection_0001",
+    "q_type": "emotion",
+    "subtype": "sarcasm_detection",
+    "answer_format": "mcq_single",
+    "question": "Despite saying 'Happy thoughts! Happy thoughts!', what was Phoebe really feeling?",
+    "choices": [
+      "Joy",
+      "Excitement",
+      "Anger",
+      "Contentment"
+    ],
+    "ground_truth": "Anger",
+    "_tests": "Acoustic vs text emotion DISAGREEMENT — words read positive, annotated emotion is 'anger'. Only an audio-grounded system has the acoustic channel to catch it.",
+    "evidence": [
+      {
+        "dialogue_id": 761,
+        "utterance_id": 3,
+        "speaker": "Phoebe",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Happy thoughts!  Happy thoughts!"
+      }
+    ]
+  },
+  {
+    "id": "emotion.sarcasm_detection_0002",
+    "q_type": "emotion",
+    "subtype": "sarcasm_detection",
+    "answer_format": "mcq_single",
+    "question": "In the statement \"Oh, totally. Oh, God, oh, she seemed so happy too.\", despite the words conveying a positive tone, what was Phoebe actually feeling?",
+    "choices": [
+      "joy",
+      "surprise",
+      "sadness",
+      "excitement"
+    ],
+    "ground_truth": "sadness",
+    "_tests": "Acoustic vs text emotion DISAGREEMENT — words read positive, annotated emotion is 'sadness'. Only an audio-grounded system has the acoustic channel to catch it.",
+    "evidence": [
+      {
+        "dialogue_id": 3,
+        "utterance_id": 8,
+        "speaker": "Phoebe",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "Oh, totally. Oh, God, oh, she seemed so happy too."
+      }
+    ]
+  },
+  {
+    "id": "emotion.sarcasm_detection_0003",
+    "q_type": "emotion",
+    "subtype": "sarcasm_detection",
+    "answer_format": "mcq_single",
+    "question": "Although the words spoken by Chandler, 'Im sorry man, theres never a good time to stop catching on fire,' sound upbeat, what emotion was Chandler actually feeling?",
+    "choices": [
+      "happiness",
+      "excited",
+      "sadness",
+      "content"
+    ],
+    "ground_truth": "sadness",
+    "_tests": "Acoustic vs text emotion DISAGREEMENT — words read positive, annotated emotion is 'sadness'. Only an audio-grounded system has the acoustic channel to catch it.",
+    "evidence": [
+      {
+        "dialogue_id": 486,
+        "utterance_id": 14,
+        "speaker": "Chandler",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "Im sorry man, theres never a good time to  stop catching on fire."
+      }
+    ]
+  },
+  {
+    "id": "emotion.sarcasm_detection_0004",
+    "q_type": "emotion",
+    "subtype": "sarcasm_detection",
+    "answer_format": "mcq_single",
+    "question": "Looking at the conversation, when Phoebe exclaimed, \"David the scientist guy, David that I was in love with, David who went to Russia and broke my heart David!\", what was she really feeling?",
+    "choices": [
+      "Joy",
+      "Excitement",
+      "Sadness",
+      "Contentment"
+    ],
+    "ground_truth": "Sadness",
+    "_tests": "Acoustic vs text emotion DISAGREEMENT — words read positive, annotated emotion is 'sadness'. Only an audio-grounded system has the acoustic channel to catch it.",
+    "evidence": [
+      {
+        "dialogue_id": 214,
+        "utterance_id": 2,
+        "speaker": "Phoebe",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "David the scientist guy, David that I was in love with, David who went to Russia and broke my heart David!"
+      }
+    ]
+  },
+  {
+    "id": "emotion.trajectory_0000",
+    "q_type": "emotion",
+    "subtype": "trajectory",
+    "answer_format": "free_form",
+    "question": "While Joey is talking about dinner plans, he says, \"No, things are fine with Kathy. Im having a late dinner with her tonight, right after my early dinner with Casey.\" How does Joey's emotional state fluctuate throughout this specific conversation?",
+    "ground_truth": "Joey starts off feeling joyful, expressing happiness about a call (\"Great! All right, so Ill call you later.\"). His mood shifts to neutral as he discusses his dinner plans with Casey and Kathy. However, his tone turns angry while talking about eating a whole pizza. He seems surprised when questioned and moves to sadness when defending his actions, saying it's not exclusive. He ends with neutral and surprised emotions as the conversation touches on other topics.",
+    "judge_rubric": "Full credit: The response should accurately describe Joey's emotional progression from joy to neutrality, followed by anger, surprise, sadness, and neutrality again. Cite specific emotional shifts with phrases, such as \"expresses joy,\" \"neutral mood,\" \"turns to anger,\" \"feels surprise,\" \"shows sadness,\" and \"returns to neutral.\" Half credit: Description partially captures the arc with some correct emotions but misses key shifts or phrases. Zero credit: Fails to capture the emotional arc or incorrectly identifies emotions.",
+    "_tests": "Multi-utterance retrieval ordered by utterance_id within ONE dialogue (localised by the anchor line) + per-turn emotion metadata.",
+    "evidence": [
+      {
+        "dialogue_id": 884,
+        "utterance_id": 1,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Great! All right, so Ill call you later."
+      },
+      {
+        "dialogue_id": 884,
+        "utterance_id": 4,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "That would be Casey. Were going out tonight."
+      },
+      {
+        "dialogue_id": 884,
+        "utterance_id": 6,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "No, things are fine with Kathy. Im having a late dinner with her tonight, right after my early dinner with Casey."
+      },
+      {
+        "dialogue_id": 884,
+        "utterance_id": 8,
+        "speaker": "Joey",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Yeah-yeah. And the craziest thing is that I just ate a whole pizza by myself!"
+      },
+      {
+        "dialogue_id": 884,
+        "utterance_id": 10,
+        "speaker": "Joey",
+        "emotion": "surprise",
+        "sentiment": "negative",
+        "utterance": "Yeah. Why are you getting so upset?"
+      },
+      {
+        "dialogue_id": 884,
+        "utterance_id": 12,
+        "speaker": "Joey",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "What is the big deal? Its not like were exclusive."
+      },
+      {
+        "dialogue_id": 884,
+        "utterance_id": 15,
+        "speaker": "Joey",
+        "emotion": "surprise",
+        "sentiment": "negative",
+        "utterance": "You got all that from the back of her head?"
+      },
+      {
+        "dialogue_id": 884,
+        "utterance_id": 17,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Whos Elaine?"
+      }
+    ]
+  },
+  {
+    "id": "emotion.trajectory_0001",
+    "q_type": "emotion",
+    "subtype": "trajectory",
+    "answer_format": "free_form",
+    "question": "Identify the emotional journey Joey goes through in the conversation where he exclaims, \"What? No-no it's her birthday!\"",
+    "ground_truth": "Joey starts off with joy as he sings a birthday song, experiences surprise upon realizing something unexpected, moves to a neutral state, expresses anger with an exclamation, and finally returns to joy.",
+    "judge_rubric": "Award full credit for identifying Joey's emotional progression from joy to surprise, neutrality, anger, and back to joy. Give half credit if the response correctly identifies some but not all emotional changes. Provide no credit if the answer does not accurately reflect Joey's emotional shifts in the conversation identified by the anchor utterance.",
+    "_tests": "Multi-utterance retrieval ordered by utterance_id within ONE dialogue (localised by the anchor line) + per-turn emotion metadata.",
+    "evidence": [
+      {
+        "dialogue_id": 288,
+        "utterance_id": 0,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "\"Happy birthday to you!\""
+      },
+      {
+        "dialogue_id": 288,
+        "utterance_id": 2,
+        "speaker": "Joey",
+        "emotion": "surprise",
+        "sentiment": "positive",
+        "utterance": "What? No-no its her birthday!"
+      },
+      {
+        "dialogue_id": 288,
+        "utterance_id": 4,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "But it really"
+      },
+      {
+        "dialogue_id": 288,
+        "utterance_id": 6,
+        "speaker": "Joey",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Damnit!"
+      },
+      {
+        "dialogue_id": 288,
+        "utterance_id": 20,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Oh-ho, and mine!"
+      }
+    ]
+  },
+  {
+    "id": "emotion.trajectory_0002",
+    "q_type": "emotion",
+    "subtype": "trajectory",
+    "answer_format": "free_form",
+    "question": "In the scene where Chandler says, \"I mean at least when I’ve seen her with clothes on, I could imagine her body was like covered in boles or something,\" how does Chandler's emotional state change throughout this conversation?",
+    "ground_truth": "Chandler begins the conversation with anger, feeling distressed after seeing Kathy naked, describing it as 'torture.' As the dialogue progresses, his emotions shift to a more neutral state, discussing his feelings more calmly and expressing his belief about Kathy's possible mutual feelings.",
+    "judge_rubric": "Award full credit if the response accurately captures Chandler's initial anger transitioning to neutrality, noting specific moments like his description of seeing Kathy as 'torture' and his later speculation about her feelings. Assign half credit if the response addresses the progression but lacks specific examples or misinterprets the emotional change. No credit if the response fails to identify any emotional transition, mentioning only one emotion or completely mischaracterizes Chandler's feelings.",
+    "_tests": "Multi-utterance retrieval ordered by utterance_id within ONE dialogue (localised by the anchor line) + per-turn emotion metadata.",
+    "evidence": [
+      {
+        "dialogue_id": 728,
+        "utterance_id": 0,
+        "speaker": "Chandler",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "I just walked in the bathroom and saw Kathy naked! It was like torture!"
+      },
+      {
+        "dialogue_id": 728,
+        "utterance_id": 2,
+        "speaker": "Chandler",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "It just keeps getting worse and worse!"
+      },
+      {
+        "dialogue_id": 728,
+        "utterance_id": 3,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "I mean its bad enough that Im in love with my roommates girlfriendwhich by the way, I think she knows."
+      },
+      {
+        "dialogue_id": 728,
+        "utterance_id": 4,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Because every time were in the room together theres this weird like energy between us."
+      },
+      {
+        "dialogue_id": 728,
+        "utterance_id": 5,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "And call me crazy, but I think she likes me too."
+      },
+      {
+        "dialogue_id": 728,
+        "utterance_id": 6,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "And now I have seen her naked."
+      },
+      {
+        "dialogue_id": 728,
+        "utterance_id": 7,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "I mean at least when Ive seen her with clothes on, I could imagine her body was like covered in boles or something."
+      },
+      {
+        "dialogue_id": 728,
+        "utterance_id": 8,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "But there are no boles, shes smooth!"
+      },
+      {
+        "dialogue_id": 728,
+        "utterance_id": 9,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Smooth!"
+      }
+    ]
+  },
+  {
+    "id": "emotion.trajectory_0003",
+    "q_type": "emotion",
+    "subtype": "trajectory",
+    "answer_format": "free_form",
+    "question": "In the conversation where Ross says, \"Okay, it was just me and her at the back of the train, and I sat near the door, so she’d have to pass by me if she wanted to switch cars,\" how does his emotional state change over the course of that dialogue?",
+    "ground_truth": "Ross begins the conversation with anger, transitions to a neutral state, experiences surprise, and ultimately shifts to joy, as seen in his excitement about the girl he met on the train. He mentions being at the back of the train and feeling delight because she was 'totally at my mercy' and talks about how she 'seems really great.'",
+    "judge_rubric": "Award full credit if the response accurately identifies Ross's emotional journey from anger to neutral, surprise, and ultimately to joy, noting his excitement about the girl on the train. Partial credit for identifying most of the emotions correctly, with particular emphasis on surprise and joy elements. No credit if the response fails to capture the progression or incorrectly identifies the emotions.",
+    "_tests": "Multi-utterance retrieval ordered by utterance_id within ONE dialogue (localised by the anchor line) + per-turn emotion metadata.",
+    "evidence": [
+      {
+        "dialogue_id": 832,
+        "utterance_id": 0,
+        "speaker": "Ross",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Hey!"
+      },
+      {
+        "dialogue_id": 832,
+        "utterance_id": 1,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Im sorry Im late, did I miss anything?"
+      },
+      {
+        "dialogue_id": 832,
+        "utterance_id": 3,
+        "speaker": "Ross",
+        "emotion": "surprise",
+        "sentiment": "positive",
+        "utterance": "15?  Your personal best! (Ross takes an"
+      },
+      {
+        "dialogue_id": 832,
+        "utterance_id": 5,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Oh, on a date. Yeah, I met this girl on the train going to a museum upstate."
+      },
+      {
+        "dialogue_id": 832,
+        "utterance_id": 9,
+        "speaker": "Ross",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Okay, it was just me and her at the back of the train, and I sat near the door, so shed have to pass by me if she wanted to switch cars."
+      },
+      {
+        "dialogue_id": 832,
+        "utterance_id": 10,
+        "speaker": "Ross",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "She was totally at my mercy."
+      },
+      {
+        "dialogue_id": 832,
+        "utterance_id": 12,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "No, Im getting back down cause she lives in Poughkeepsie."
+      },
+      {
+        "dialogue_id": 832,
+        "utterance_id": 13,
+        "speaker": "Ross",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "She seems really great, but shes like totally great, but she lives two and a half hours away."
+      }
+    ]
+  },
+  {
+    "id": "emotion.trajectory_0004",
+    "q_type": "emotion",
+    "subtype": "trajectory",
+    "answer_format": "free_form",
+    "question": "In the conversation where Chandler says, \"I know this isn't the kind of Thanksgiving that all of you all planned, but for me, this has been really great, you know, I think because it didn't involve divorce or projectile vomiting,\" how does Chandler's emotional demeanor change throughout the exchange?",
+    "ground_truth": "Chandler starts off expressing joy with a toast and continues to express happiness about the unexpected Thanksgiving, noting its positive aspects. However, his mood briefly shifts to anger as he reflects on the circumstances that brought everyone together. He quickly returns to joy, appreciating the situation despite its imperfections, and ends on a positive note.",
+    "judge_rubric": "Award full credit if the response accurately notes Chandler's shift from joy to anger and back to joy, mentioning specific phrases like 'toast' for joy, 'thinking' for anger, and 'thankful' for the concluding joy. Partial credit for mentioning the emotional change without specifics, and no credit if the arc or emotions are misunderstood.",
+    "_tests": "Multi-utterance retrieval ordered by utterance_id within ONE dialogue (localised by the anchor line) + per-turn emotion metadata.",
+    "evidence": [
+      {
+        "dialogue_id": 793,
+        "utterance_id": 2,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "I'd like to propose a toast."
+      },
+      {
+        "dialogue_id": 793,
+        "utterance_id": 3,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Little toast here, ding ding."
+      },
+      {
+        "dialogue_id": 793,
+        "utterance_id": 4,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "I know this isn't the kind of Thanksgiving that all of you all planned, but for me, this has been really great, you know, I think because it didn't involve divorce or projectile vomiting."
+      },
+      {
+        "dialogue_id": 793,
+        "utterance_id": 5,
+        "speaker": "Chandler",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Anyway, I was just thinking, I mean, if you'd gone to Vail, and if you guys'd been with your family, if you didn't have syphilis and stuff, we wouldn't be all together, you know?"
+      },
+      {
+        "dialogue_id": 793,
+        "utterance_id": 6,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "So I guess what I'm trying to say is that I'm very thankful that all of your Thanksgivings sucked."
+      },
+      {
+        "dialogue_id": 793,
+        "utterance_id": 10,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Here, here!"
+      }
+    ]
+  },
+  {
+    "id": "semantic_recall.open_summary_0000",
+    "q_type": "semantic_recall",
+    "subtype": "open_summary",
+    "answer_format": "free_form",
+    "question": "Rachel's thoughts on Joshua across several conversations, summarize them?",
+    "ground_truth": "Rachel expresses a range of emotions towards Joshua, from sadness when he doesn't call to excitement when he visits her at work. She considers placing a note in his coat as a way to ask him out. Despite her feelings, she is hesitant and doesn't have the courage to make a move directly.",
+    "judge_rubric": "A good summary should capture Rachel's emotional range regarding Joshua, noting her sadness, hesitation, and eventual excitement when he shows up at her workplace. Mentioning her plan to communicate by leaving a note in his coat adds depth to the summary. Avoid inferring beyond the provided utterances.",
+    "_tests": "Filtered semantic search (speaker=Rachel, topic=Joshua) + multi-utterance synthesis across 7 dialogues.",
+    "evidence": [
+      {
+        "dialogue_id": 84,
+        "utterance_id": 6,
+        "speaker": "Rachel",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "Oh, wait, Joshua! Joshua!   Yeah, well, that oughta do it."
+      },
+      {
+        "dialogue_id": 89,
+        "utterance_id": 8,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Now, maybe I would have a problem with this if it wasnt for me and Joshua."
+      },
+      {
+        "dialogue_id": 109,
+        "utterance_id": 6,
+        "speaker": "Rachel",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "Well, I just checked our messages and Joshua didnt call."
+      },
+      {
+        "dialogue_id": 409,
+        "utterance_id": 1,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Well, Joshuas coming in tomorrow and since I dont have the guts to ask him out, Im going to sell him a coat and put this note in the pocket."
+      },
+      {
+        "dialogue_id": 428,
+        "utterance_id": 6,
+        "speaker": "Rachel",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "No-no-no, that not Joshua."
+      },
+      {
+        "dialogue_id": 543,
+        "utterance_id": 2,
+        "speaker": "Rachel",
+        "emotion": "surprise",
+        "sentiment": "positive",
+        "utterance": "Oh my gosh, Joshua!"
+      },
+      {
+        "dialogue_id": 564,
+        "utterance_id": 0,
+        "speaker": "Rachel",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Youarenot going to believe it! Joshua came into work today, and guess what happened?"
+      }
+    ]
+  },
+  {
+    "id": "semantic_recall.open_summary_0001",
+    "q_type": "semantic_recall",
+    "subtype": "open_summary",
+    "answer_format": "free_form",
+    "question": "Can you summarize Monica's thoughts on David as discussed across the conversations?",
+    "ground_truth": "Monica expressed surprise at the situation involving David, Mike, and Phoebe, indicating uncertainty about the outcome. She also predicted that Phoebe would reject David, leading to heartbreak and difficulty in recovery, ultimately leaving Phoebe alone. There was also a moment of neutrality where Monica sought David's help in explaining a concept to Chandler.",
+    "judge_rubric": "Check if the summary captures Monica's surprise about the situation with Phoebe and David, her prediction of Phoebe rejecting David, and the potential for heartbreak. It should also mention her seeking David's help in explaining something to Chandler. Avoid including any unrelated or speculative details.",
+    "_tests": "Filtered semantic search (speaker=Monica, topic=David) + multi-utterance synthesis across 3 dialogues.",
+    "evidence": [
+      {
+        "dialogue_id": 29,
+        "utterance_id": 0,
+        "speaker": "Monica",
+        "emotion": "surprise",
+        "sentiment": "positive",
+        "utterance": "Wow! That Mike thing was interesting! I don't know what's gonna happen with Phoebe and David."
+      },
+      {
+        "dialogue_id": 29,
+        "utterance_id": 11,
+        "speaker": "Monica",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "She'll say \"No\", David's heart will be broken, it will be too hard for them to recover from and then Phoebe will end up alone"
+      },
+      {
+        "dialogue_id": 214,
+        "utterance_id": 1,
+        "speaker": "Monica",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "David who?"
+      },
+      {
+        "dialogue_id": 240,
+        "utterance_id": 0,
+        "speaker": "Monica",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "David, can you help me?! I'm trying to explain to Chandler how a plane stays in the air."
+      }
+    ]
+  },
+  {
+    "id": "semantic_recall.open_summary_0002",
+    "q_type": "semantic_recall",
+    "subtype": "open_summary",
+    "answer_format": "free_form",
+    "question": "What has Chandler expressed about Jill in the conversations recorded?",
+    "ground_truth": "Chandler is surprised and excited to find himself \"trapped in an ATM vestibule with Jill Goodacre,\" indicating his admiration or excitement about being near her. He also mentions adopting the term 'vestibule' because Jill used it, reflecting his impressionability. Later, Chandler expresses sadness about Jill being gone, revealing a deeper emotional impact.",
+    "judge_rubric": "Assess if the summary captures Chandler's initial excitement about encountering Jill Goodacre in an ATM vestibule, his influence by her word choice, and his sadness over her departure. The summary should reflect the range of emotions Chandler exhibits: surprise, joy, and sadness.",
+    "_tests": "Filtered semantic search (speaker=Chandler, topic=Jill) + multi-utterance synthesis across 2 dialogues.",
+    "evidence": [
+      {
+        "dialogue_id": 56,
+        "utterance_id": 2,
+        "speaker": "Chandler",
+        "emotion": "surprise",
+        "sentiment": "positive",
+        "utterance": "She's right, it's Jill. Jill Goodacre. Oh my God. I am trapped in an ATM vestibule with Jill Goodacre!"
+      },
+      {
+        "dialogue_id": 56,
+        "utterance_id": 4,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Jill says vestibule... I'm going with vestibule."
+      },
+      {
+        "dialogue_id": 56,
+        "utterance_id": 6,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Oh! Some guy. Some guy. 'Hey Jill, I saw you with some guy last night. Yes, he was"
+      },
+      {
+        "dialogue_id": 328,
+        "utterance_id": 8,
+        "speaker": "Chandler",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "I-I cant believe Jills gone.  I cant help it, I opened a gate."
+      }
+    ]
+  },
+  {
+    "id": "semantic_recall.open_summary_0003",
+    "q_type": "semantic_recall",
+    "subtype": "open_summary",
+    "answer_format": "free_form",
+    "question": "Capture Joey's perspective using \"Dude\" from the conversations provided.",
+    "ground_truth": "Joey frequently uses 'Dude' to express a range of emotions. He shows regret saying, 'Dude, I am sorry about what I said!' and anger with 'Dude, if you go back out there, you’re gonna be Dead Ross!' He also uses it in neutral or joking contexts, as seen in 'Dude! What are yo—you trying to kill me?!' and simply exclaims 'Dude!' with joy.",
+    "judge_rubric": "To be correct, the summary must highlight Joey's use of the word 'Dude' to convey different emotions, including sadness, anger, neutrality, and joy. It should reference specific utterances to support these emotional contexts.",
+    "_tests": "Filtered semantic search (speaker=Joey, topic=Dude) + multi-utterance synthesis across 5 dialogues.",
+    "evidence": [
+      {
+        "dialogue_id": 45,
+        "utterance_id": 0,
+        "speaker": "Joey",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "Dude, I am sorry about what I said!"
+      },
+      {
+        "dialogue_id": 274,
+        "utterance_id": 7,
+        "speaker": "Joey",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Dude, this isnt funny!"
+      },
+      {
+        "dialogue_id": 437,
+        "utterance_id": 2,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Dude! What are yoyou trying to kill me?!"
+      },
+      {
+        "dialogue_id": 888,
+        "utterance_id": 1,
+        "speaker": "Joey",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Dude, if you go back out there, youre gonna be Dead Ross!"
+      },
+      {
+        "dialogue_id": 979,
+        "utterance_id": 1,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Dude!"
+      }
+    ]
+  },
+  {
+    "id": "semantic_recall.open_summary_0004",
+    "q_type": "semantic_recall",
+    "subtype": "open_summary",
+    "answer_format": "free_form",
+    "question": "Summarize what Monica has expressed about Rach across the enrolled conversations.",
+    "ground_truth": "Monica addresses Rach frequently, checking in on her work and life. She expresses joy about Rach being in a good place with a 'great job' and 'good friends.' Monica also offers encouragement and humor in talking about Rach's creative efforts, and she shows concern over decisions Rach is making.",
+    "judge_rubric": "To judge the accuracy of a summary, verify that it accurately captures Monica's interactions with Rach as described in the hits. The summary must include Monica's recognition of Rach's success, her supportive attitude, and the nature of their exchanges.",
+    "_tests": "Filtered semantic search (speaker=Monica, topic=Rach) + multi-utterance synthesis across 8 dialogues.",
+    "evidence": [
+      {
+        "dialogue_id": 17,
+        "utterance_id": 3,
+        "speaker": "Monica",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Rach? What are you doing?"
+      },
+      {
+        "dialogue_id": 43,
+        "utterance_id": 0,
+        "speaker": "Monica",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Hey, Rach, how was work?"
+      },
+      {
+        "dialogue_id": 138,
+        "utterance_id": 10,
+        "speaker": "Monica",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Well. Sounds like you're writing yourself a little play there Rach. Wow! Let me know how that one turns out."
+      },
+      {
+        "dialogue_id": 195,
+        "utterance_id": 18,
+        "speaker": "Monica",
+        "emotion": "surprise",
+        "sentiment": "positive",
+        "utterance": "Rach, are you really gonna let him do this?"
+      },
+      {
+        "dialogue_id": 310,
+        "utterance_id": 3,
+        "speaker": "Monica",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "Hey, Rach! I made a pile of your stuff over on this side of the room. If you could justthrow your purses at it."
+      },
+      {
+        "dialogue_id": 574,
+        "utterance_id": 0,
+        "speaker": "Monica",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Hey, Rach, can I borrow your eyelash curler, I think I lost mine."
+      },
+      {
+        "dialogue_id": 656,
+        "utterance_id": 0,
+        "speaker": "Monica",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Rach, youre in a great place in your life. Come on, youve got a great job! Good friends"
+      },
+      {
+        "dialogue_id": 680,
+        "utterance_id": 9,
+        "speaker": "Monica",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "So Rach!"
+      }
+    ]
+  },
+  {
+    "id": "semantic_recall.quote_completion_0000",
+    "q_type": "semantic_recall",
+    "subtype": "quote_completion",
+    "answer_format": "fuzzy_match",
+    "question": "Looking at the conversations, complete this Ross quote: \"Ancient Egypt, Mesopotamia, up to the ___ Empire.\"",
+    "ground_truth": "Byzantine",
+    "accept_variants": [
+      "Byzantine"
+    ],
+    "_tests": "Precise lexical retrieval — embeddings must rank the source utterance #1 and the LLM read the exact missing tokens off it.",
+    "evidence": [
+      {
+        "dialogue_id": 732,
+        "utterance_id": 0,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Ancient Egypt, Mesopotamia, up to the Byzantine Empire."
+      }
+    ]
+  },
+  {
+    "id": "semantic_recall.quote_completion_0001",
+    "q_type": "semantic_recall",
+    "subtype": "quote_completion",
+    "answer_format": "fuzzy_match",
+    "question": "Rachel is attempting to cut back in some way, and she finishes with this: Complete her quote with: 'Yeah, I did, but y'know what? I am really, really trying to cut back, y'know? ___.'",
+    "ground_truth": "Good luck, Rach.",
+    "accept_variants": [
+      "Good luck, Rach."
+    ],
+    "_tests": "Precise lexical retrieval — embeddings must rank the source utterance #1 and the LLM read the exact missing tokens off it.",
+    "evidence": [
+      {
+        "dialogue_id": 614,
+        "utterance_id": 4,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Yeah, I did, but y'know what? I am really, really trying to cut back, y'know?  Good luck, Rach."
+      }
+    ]
+  },
+  {
+    "id": "semantic_recall.quote_completion_0002",
+    "q_type": "semantic_recall",
+    "subtype": "quote_completion",
+    "answer_format": "fuzzy_match",
+    "question": "Complete this Ross quote from one of the enrolled conversations: \"Yeah. Tell ya what, lets not invite any of the anthropologists, only the ___!\"",
+    "ground_truth": "dinosaur dudes",
+    "accept_variants": [
+      "dinosaur dudes"
+    ],
+    "_tests": "Precise lexical retrieval — embeddings must rank the source utterance #1 and the LLM read the exact missing tokens off it.",
+    "evidence": [
+      {
+        "dialogue_id": 870,
+        "utterance_id": 5,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Yeah. Tell ya what, lets not invite any of the anthropologists, only the dinosaur dudes!"
+      }
+    ]
+  },
+  {
+    "id": "semantic_recall.quote_completion_0003",
+    "q_type": "semantic_recall",
+    "subtype": "quote_completion",
+    "answer_format": "fuzzy_match",
+    "question": "Complete this Monica quote from one of the enrolled conversations: \"Yeah! Okay, this one is a mushroom cap. ___, this one is made of bologna.\"",
+    "ground_truth": "Umm",
+    "accept_variants": [
+      "Umm"
+    ],
+    "_tests": "Precise lexical retrieval — embeddings must rank the source utterance #1 and the LLM read the exact missing tokens off it.",
+    "evidence": [
+      {
+        "dialogue_id": 37,
+        "utterance_id": 2,
+        "speaker": "Monica",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Yeah! Okay, this one is a mushroom cap.  Umm, this one is made of bologna."
+      }
+    ]
+  },
+  {
+    "id": "semantic_recall.quote_completion_0004",
+    "q_type": "semantic_recall",
+    "subtype": "quote_completion",
+    "answer_format": "fuzzy_match",
+    "question": "Complete this Chandler quote from one of the enrolled conversations: \"Come on ___! Finish up with your customer first. Come on ___! Come on ___!!\"",
+    "ground_truth": "Chloe",
+    "accept_variants": [
+      "Chloe"
+    ],
+    "_tests": "Precise lexical retrieval — embeddings must rank the source utterance #1 and the LLM read the exact missing tokens off it.",
+    "evidence": [
+      {
+        "dialogue_id": 305,
+        "utterance_id": 0,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Come on Chloe! Finish up with your customer first. Come on Chloe! Come on Chloe!!"
+      }
+    ]
+  },
+  {
+    "id": "graph.entity_cross_speaker_0000",
+    "q_type": "graph",
+    "subtype": "entity_cross_speaker",
+    "answer_format": "mcq_multi",
+    "question": "Which of the six main friends have named 'Joe' in the series?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": [
+      "Chandler",
+      "Monica",
+      "Rachel",
+      "Ross"
+    ],
+    "_tests": "Cross-speaker entity merging — EntityResolver must merge 'Joe' mentions from ['Chandler', 'Monica', 'Rachel', 'Ross'] into one node. The exclusion of ['Joey', 'Phoebe'] is the hard part.",
+    "evidence": [
+      {
+        "dialogue_id": 6,
+        "utterance_id": 0,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Good job Joe! Well done! Top notch!"
+      },
+      {
+        "dialogue_id": 130,
+        "utterance_id": 4,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Yeah, I dont think so Joe."
+      },
+      {
+        "dialogue_id": 176,
+        "utterance_id": 6,
+        "speaker": "Monica",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Oh, that's Nana, right there in the middle.  'Me and the gang at Java Joe's'."
+      },
+      {
+        "dialogue_id": 961,
+        "utterance_id": 12,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "That's okay, Joe."
+      }
+    ]
+  },
+  {
+    "id": "graph.entity_cross_speaker_0001",
+    "q_type": "graph",
+    "subtype": "entity_cross_speaker",
+    "answer_format": "mcq_multi",
+    "question": "In the conversations from the enrolled corpus, which of the six main friends specifically mentioned 'Mac' by name during their dialogue?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": [
+      "Chandler",
+      "Joey",
+      "Rachel"
+    ],
+    "_tests": "Cross-speaker entity merging — EntityResolver must merge 'Mac' mentions from ['Chandler', 'Joey', 'Rachel'] into one node. The exclusion of ['Monica', 'Phoebe', 'Ross'] is the hard part.",
+    "evidence": [
+      {
+        "dialogue_id": 293,
+        "utterance_id": 0,
+        "speaker": "Joey",
+        "emotion": "surprise",
+        "sentiment": "negative",
+        "utterance": "Apparently, theres like a million guys out there that can play Mac, and theres only this one robot and this one guy who controls it!"
+      },
+      {
+        "dialogue_id": 612,
+        "utterance_id": 3,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "The actor playing Mac couldnt do it, they needed to see you at 2 oclock."
+      },
+      {
+        "dialogue_id": 679,
+        "utterance_id": 8,
+        "speaker": "Rachel",
+        "emotion": "surprise",
+        "sentiment": "positive",
+        "utterance": "Oh my God! Its Joey Tribbiani of Mac and C.H.E.E.S.E.!!!!!!!"
+      }
+    ]
+  },
+  {
+    "id": "graph.entity_cross_speaker_0002",
+    "q_type": "graph",
+    "subtype": "entity_cross_speaker",
+    "answer_format": "mcq_multi",
+    "question": "Looking at the conversations, which of the six main friends have mentioned 'Carol' by name?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": [
+      "Chandler",
+      "Monica",
+      "Rachel",
+      "Ross"
+    ],
+    "_tests": "Cross-speaker entity merging — EntityResolver must merge 'Carol' mentions from ['Chandler', 'Monica', 'Rachel', 'Ross'] into one node. The exclusion of ['Joey', 'Phoebe'] is the hard part.",
+    "evidence": [
+      {
+        "dialogue_id": 185,
+        "utterance_id": 10,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Come on, Ross? Remember back in college, when he fell in love with Carol and bought her that ridiculously expensive crystal duck?"
+      },
+      {
+        "dialogue_id": 523,
+        "utterance_id": 1,
+        "speaker": "Rachel",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "I mean, I couldn't not know, I mean, if, if the doctor knows, and Carol knows, and Susan knows...."
+      },
+      {
+        "dialogue_id": 523,
+        "utterance_id": 4,
+        "speaker": "Monica",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Carol called me to thank me for the lasagna, I asked, she told me."
+      },
+      {
+        "dialogue_id": 541,
+        "utterance_id": 2,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Look Carol umm, I was, I was thinking maybe uh, maybe we can spice things up a little."
+      }
+    ]
+  },
+  {
+    "id": "graph.entity_cross_speaker_0003",
+    "q_type": "graph",
+    "subtype": "entity_cross_speaker",
+    "answer_format": "mcq_multi",
+    "question": "Which of the six main characters in the series have mentioned 'Julie' by name during their own dialogue?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": [
+      "Chandler",
+      "Rachel",
+      "Ross"
+    ],
+    "_tests": "Cross-speaker entity merging — EntityResolver must merge 'Julie' mentions from ['Chandler', 'Rachel', 'Ross'] into one node. The exclusion of ['Joey', 'Monica', 'Phoebe'] is the hard part.",
+    "evidence": [
+      {
+        "dialogue_id": 142,
+        "utterance_id": 0,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Yeah, yeah, everybody's here. Hey, everybody, say hi to Julie in New Mexico."
+      },
+      {
+        "dialogue_id": 242,
+        "utterance_id": 0,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Julie hi! Chandler Bing, I, I guess you remember me."
+      },
+      {
+        "dialogue_id": 455,
+        "utterance_id": 15,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "All right, Julie."
+      }
+    ]
+  },
+  {
+    "id": "graph.entity_cross_speaker_0004",
+    "q_type": "graph",
+    "subtype": "entity_cross_speaker",
+    "answer_format": "mcq_multi",
+    "question": "In the enrolled corpus, which of the six principal characters in 'Friends' have explicitly mentioned 'Mark' by name in their dialogue?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": [
+      "Chandler",
+      "Joey",
+      "Rachel"
+    ],
+    "_tests": "Cross-speaker entity merging — EntityResolver must merge 'Mark' mentions from ['Chandler', 'Joey', 'Rachel'] into one node. The exclusion of ['Monica', 'Phoebe', 'Ross'] is the hard part.",
+    "evidence": [
+      {
+        "dialogue_id": 4,
+        "utterance_id": 8,
+        "speaker": "Rachel",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Oh well, the woman I interviewed with was pretty tough, but y'know thank God Mark coached me, because once I started talking about the fall line, she got all happy and wouldnt shut up."
+      },
+      {
+        "dialogue_id": 869,
+        "utterance_id": 0,
+        "speaker": "Joey",
+        "emotion": "surprise",
+        "sentiment": "positive",
+        "utterance": "Mark's a genius!"
+      },
+      {
+        "dialogue_id": 918,
+        "utterance_id": 1,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Okay. Okay. All right. Help! Am I a Mark, or a John?"
+      }
+    ]
+  },
+  {
+    "id": "graph.relationship_inference_0000",
+    "q_type": "graph",
+    "subtype": "relationship_inference",
+    "answer_format": "free_form",
+    "question": "Given that Monica interacts with Can in ways suggesting shared activities and casual settings, what is their relationship?",
+    "ground_truth": "Monica and Can seem to have a close, possibly familial or friendly relationship, as they discuss shared activities and possessive comments like 'Can you just hold on' and 'Can we just start throwing things in?'",
+    "judge_rubric": "Evaluate whether Monica's conversations with Can imply familiarity and shared experiences. Look for evidence of casual dialogue, use of direct address, and discussions involving mutual activities or support, which suggest a close relationship.",
+    "_tests": "Entity description aggregation — accumulated descriptions of 'Can' across 8 of Monica's utterances let the LLM infer the relationship.",
+    "evidence": [
+      {
+        "dialogue_id": 297,
+        "utterance_id": 5,
+        "speaker": "Monica",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Can you just hold on for one minute?"
+      },
+      {
+        "dialogue_id": 440,
+        "utterance_id": 4,
+        "speaker": "Monica",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Can we just start throwing things in?"
+      },
+      {
+        "dialogue_id": 516,
+        "utterance_id": 3,
+        "speaker": "Monica",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "My boots in tan! Hey! Can you get a little closer so I can see the price?"
+      },
+      {
+        "dialogue_id": 551,
+        "utterance_id": 5,
+        "speaker": "Monica",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Oh-ho! But not in here! Cant eat em in bed, remember? No crumbies!"
+      },
+      {
+        "dialogue_id": 666,
+        "utterance_id": 9,
+        "speaker": "Monica",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "We'll be right there!  Can't you just say it starts later?"
+      },
+      {
+        "dialogue_id": 770,
+        "utterance_id": 8,
+        "speaker": "Monica",
+        "emotion": "disgust",
+        "sentiment": "negative",
+        "utterance": "Can we turn the TV off? Okay? Do we really want to spend the entire weekend like this?"
+      },
+      {
+        "dialogue_id": 801,
+        "utterance_id": 2,
+        "speaker": "Monica",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Can you do that for me?"
+      },
+      {
+        "dialogue_id": 910,
+        "utterance_id": 9,
+        "speaker": "Monica",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Can I ask you guys a question? D'you ever think that Alan is maybe.. sometimes.."
+      }
+    ]
+  },
+  {
+    "id": "graph.relationship_inference_0001",
+    "q_type": "graph",
+    "subtype": "relationship_inference",
+    "answer_format": "free_form",
+    "question": "In the midst of various social interactions, what is the nature of Ross's relationship with Pheebs?",
+    "ground_truth": "Ross and Pheebs appear to have a friendly relationship. Ross frequently addresses her in a casual and familiar manner, as seen in remarks like 'Hey, Pheebs.' and 'All right, let’s go! Bye, Pheebs!', suggesting they are friends.",
+    "judge_rubric": "The correct answer will recognize that Ross and Pheebs share a friendly relationship. Look for indications of camaraderie in casual language and greetings, such as 'Hey, Pheebs.' and expressions of joy or support. Answers should infer friendship based on the use of first names and the overall casual tone.",
+    "_tests": "Entity description aggregation — accumulated descriptions of 'Pheebs' across 8 of Ross's utterances let the LLM infer the relationship.",
+    "evidence": [
+      {
+        "dialogue_id": 11,
+        "utterance_id": 6,
+        "speaker": "Ross",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "All right, lets go! Bye, Pheebs!"
+      },
+      {
+        "dialogue_id": 107,
+        "utterance_id": 6,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Hey, Pheebs."
+      },
+      {
+        "dialogue_id": 167,
+        "utterance_id": 7,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Yeah Pheebs, come on, you two have completely different styles. Y'know, shes more.. y'know, and youre more"
+      },
+      {
+        "dialogue_id": 260,
+        "utterance_id": 10,
+        "speaker": "Ross",
+        "emotion": "fear",
+        "sentiment": "negative",
+        "utterance": "Uh, Pheebs, some people call that breaking and entering."
+      },
+      {
+        "dialogue_id": 358,
+        "utterance_id": 16,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Pheebs, come on, you didnt kill anybody, these people just happened to die when you went to the dentist."
+      },
+      {
+        "dialogue_id": 406,
+        "utterance_id": 0,
+        "speaker": "Ross",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Hey everybody, Pheebs is here!"
+      },
+      {
+        "dialogue_id": 450,
+        "utterance_id": 1,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Thank you, but I want to remove it Pheebs. I dont want to make it savory."
+      },
+      {
+        "dialogue_id": 477,
+        "utterance_id": 9,
+        "speaker": "Ross",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Pheebs, I think shes great. Okay? Were going out again."
+      }
+    ]
+  },
+  {
+    "id": "graph.relationship_inference_0002",
+    "q_type": "graph",
+    "subtype": "relationship_inference",
+    "answer_format": "free_form",
+    "question": "What's the connection between Ross and Carol according to these exchanges?",
+    "ground_truth": "Ross and Carol appear to have had a romantic relationship, as suggested by Ross discussing their sex life ('our sex life isits just not working') and the mention of spicing things up ('maybe we can spice things up a little').",
+    "judge_rubric": "Focus on identifying whether a romantic or personal relationship exists between Ross and Carol based on the utterances. Key phrases about their sex life and suggestions to 'spice things up' indicate a past or present romantic connection.",
+    "_tests": "Entity description aggregation — accumulated descriptions of 'Carol' across 8 of Ross's utterances let the LLM infer the relationship.",
+    "evidence": [
+      {
+        "dialogue_id": 541,
+        "utterance_id": 2,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Look Carol umm, I was, I was thinking maybe uh, maybe we can spice things up a little."
+      },
+      {
+        "dialogue_id": 541,
+        "utterance_id": 4,
+        "speaker": "Ross",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "Carol our sex life isits just not working"
+      },
+      {
+        "dialogue_id": 629,
+        "utterance_id": 1,
+        "speaker": "Ross",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Carol, we've been through this before, ok?"
+      },
+      {
+        "dialogue_id": 659,
+        "utterance_id": 5,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Hey, do you think...would it be too weird if I invited Carol over to join us?"
+      },
+      {
+        "dialogue_id": 659,
+        "utterance_id": 8,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Are you sure? Great. Carol? Wanna come over and join us?"
+      },
+      {
+        "dialogue_id": 659,
+        "utterance_id": 16,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Uh, Kristen Riggs, this is Carol Willick."
+      },
+      {
+        "dialogue_id": 659,
+        "utterance_id": 17,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Carol, Kristin."
+      },
+      {
+        "dialogue_id": 659,
+        "utterance_id": 18,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Uh, Carol teaches sixth grade."
+      }
+    ]
+  },
+  {
+    "id": "graph.relationship_inference_0003",
+    "q_type": "graph",
+    "subtype": "relationship_inference",
+    "answer_format": "free_form",
+    "question": "From the provided conversations, how would you describe the relationship between Chandler and Joe?",
+    "ground_truth": "Chandler and Joe appear to have a friendly relationship, with Chandler expressing joy when praising Joe's achievements, saying 'Good job Joe! Well done! Top notch!' and inviting him to 'shoot some hoops.'",
+    "judge_rubric": "Look for indications of camaraderie, such as friendly exchanges and positive interactions. Mentions of praise like 'Good job Joe! Well done!' and inviting Joe for activities are strong signs of a friendly relationship. The presence of various emotions, including joy and anger in the discussions, can provide extra context but should not detract from the overall friendly tone.",
+    "_tests": "Entity description aggregation — accumulated descriptions of 'Joe' across 8 of Chandler's utterances let the LLM infer the relationship.",
+    "evidence": [
+      {
+        "dialogue_id": 6,
+        "utterance_id": 0,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Good job Joe! Well done! Top notch!"
+      },
+      {
+        "dialogue_id": 93,
+        "utterance_id": 4,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Excellent hole, Joe."
+      },
+      {
+        "dialogue_id": 111,
+        "utterance_id": 1,
+        "speaker": "Chandler",
+        "emotion": "fear",
+        "sentiment": "negative",
+        "utterance": "Joe?"
+      },
+      {
+        "dialogue_id": 356,
+        "utterance_id": 10,
+        "speaker": "Chandler",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Well, I'm sorry Joe. I didn't think the doctor was gonna buy that it just *fell* out of the socket."
+      },
+      {
+        "dialogue_id": 446,
+        "utterance_id": 6,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Thats not a state Joe."
+      },
+      {
+        "dialogue_id": 532,
+        "utterance_id": 0,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Where you going, Joe?"
+      },
+      {
+        "dialogue_id": 532,
+        "utterance_id": 6,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "I'm afraid I can't let you do that, Joe."
+      },
+      {
+        "dialogue_id": 709,
+        "utterance_id": 0,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Hey Joe! You wanna shoot some hoops?"
+      }
+    ]
+  },
+  {
+    "id": "graph.relationship_inference_0004",
+    "q_type": "graph",
+    "subtype": "relationship_inference",
+    "answer_format": "free_form",
+    "question": "What can we deduce about Chandler's connection to Pheebs from their conversations?",
+    "ground_truth": "Chandler and Pheebs seem to have a friendly relationship. Chandler frequently addresses her directly and casually, such as saying 'Hey, Pheebs!' and asking for help with personal matters like 'can you help me pick out an engagement ring for Monica?'",
+    "judge_rubric": "Look for evidence of a friendly or casual relationship between Chandler and Pheebs. Direct address and casual language, such as greetings and informal requests, support this inference.",
+    "_tests": "Entity description aggregation — accumulated descriptions of 'Pheebs' across 8 of Chandler's utterances let the LLM infer the relationship.",
+    "evidence": [
+      {
+        "dialogue_id": 33,
+        "utterance_id": 3,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Yeah, right here in my pocket.  Pheebs?"
+      },
+      {
+        "dialogue_id": 273,
+        "utterance_id": 0,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Pheebs, can you help me pick out an engagement ring for Monica?"
+      },
+      {
+        "dialogue_id": 347,
+        "utterance_id": 3,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Nope! Because Im not your boyfriend.  Hey Pheebs, how did it go?"
+      },
+      {
+        "dialogue_id": 405,
+        "utterance_id": 4,
+        "speaker": "Chandler",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Pheebs?"
+      },
+      {
+        "dialogue_id": 406,
+        "utterance_id": 2,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Hey, Pheebs!"
+      },
+      {
+        "dialogue_id": 527,
+        "utterance_id": 1,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Hey Pheebs!"
+      },
+      {
+        "dialogue_id": 823,
+        "utterance_id": 9,
+        "speaker": "Chandler",
+        "emotion": "disgust",
+        "sentiment": "negative",
+        "utterance": "Pheebs, wake up and smell the restraining order."
+      },
+      {
+        "dialogue_id": 902,
+        "utterance_id": 10,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Pheebs!!"
+      }
+    ]
+  },
+  {
+    "id": "aggregate.argmax_speaker_0000",
+    "q_type": "aggregate",
+    "subtype": "argmax_speaker",
+    "answer_format": "mcq_single",
+    "question": "'Anger' most often expressed, across the enrolled corpus, by which of the six main friends is?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": "Phoebe",
+    "_tests": "Metadata aggregation over the enrolled set. Ranking: Phoebe 172, Joey 169, Ross 162, Rachel 160, Monica 160, Chandler 131.",
+    "evidence": [
+      {
+        "_note": "Aggregation question — answer is a corpus-wide count."
+      }
+    ]
+  },
+  {
+    "id": "aggregate.argmax_speaker_0001",
+    "q_type": "aggregate",
+    "subtype": "argmax_speaker",
+    "answer_format": "mcq_single",
+    "question": "Among the six friends, who shows 'sadness' the most?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": "Rachel",
+    "_tests": "Metadata aggregation over the enrolled set. Ranking: Rachel 149, Ross 104, Phoebe 104, Joey 82, Monica 82, Chandler 66.",
+    "evidence": [
+      {
+        "_note": "Aggregation question — answer is a corpus-wide count."
+      }
+    ]
+  },
+  {
+    "id": "aggregate.argmax_speaker_0002",
+    "q_type": "aggregate",
+    "subtype": "argmax_speaker",
+    "answer_format": "mcq_single",
+    "question": "Who among the six friends often shows 'joy' in the series?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": "Joey",
+    "_tests": "Metadata aggregation over the enrolled set. Ranking: Joey 279, Ross 263, Rachel 242, Monica 239, Phoebe 226, Chandler 200.",
+    "evidence": [
+      {
+        "_note": "Aggregation question — answer is a corpus-wide count."
+      }
+    ]
+  },
+  {
+    "id": "aggregate.argmax_speaker_0003",
+    "q_type": "aggregate",
+    "subtype": "argmax_speaker",
+    "answer_format": "mcq_single",
+    "question": "Within the scope of the enrolled corpus, which of the six principal friends exhibits the emotion of 'disgust' with the greatest frequency?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": "Monica",
+    "_tests": "Metadata aggregation over the enrolled set. Ranking: Monica 54, Chandler 45, Joey 39, Phoebe 38, Rachel 36, Ross 24.",
+    "evidence": [
+      {
+        "_note": "Aggregation question — answer is a corpus-wide count."
+      }
+    ]
+  },
+  {
+    "id": "aggregate.argmax_speaker_0004",
+    "q_type": "aggregate",
+    "subtype": "argmax_speaker",
+    "answer_format": "mcq_single",
+    "question": "Who among the six main friends shows 'surprise' the most frequently in the given corpus?",
+    "choices": [
+      "Joey",
+      "Ross",
+      "Rachel",
+      "Phoebe",
+      "Monica",
+      "Chandler"
+    ],
+    "ground_truth": "Rachel",
+    "_tests": "Metadata aggregation over the enrolled set. Ranking: Rachel 207, Joey 198, Monica 178, Phoebe 162, Chandler 145, Ross 144.",
+    "evidence": [
+      {
+        "_note": "Aggregation question — answer is a corpus-wide count."
+      }
+    ]
+  },
+  {
+    "id": "aggregate.exact_count_0000",
+    "q_type": "aggregate",
+    "subtype": "exact_count",
+    "answer_format": "numeric",
+    "question": "The emotion 'disgust' is a focus here. How often does Phoebe convey this throughout all the conversations?",
+    "tolerance": 0,
+    "ground_truth": 38,
+    "_tests": "Exact integer aggregation over (speaker=Phoebe, emotion=disgust).",
+    "evidence": []
+  },
+  {
+    "id": "aggregate.exact_count_0001",
+    "q_type": "aggregate",
+    "subtype": "exact_count",
+    "answer_format": "numeric",
+    "question": "Looking at the conversations, how often does Ross express 'surprise'?",
+    "tolerance": 0,
+    "ground_truth": 144,
+    "_tests": "Exact integer aggregation over (speaker=Ross, emotion=surprise).",
+    "evidence": []
+  },
+  {
+    "id": "aggregate.exact_count_0002",
+    "q_type": "aggregate",
+    "subtype": "exact_count",
+    "answer_format": "numeric",
+    "question": "As conversations unfold, how often does Rachel show 'anger' across all of them?",
+    "tolerance": 0,
+    "ground_truth": 160,
+    "_tests": "Exact integer aggregation over (speaker=Rachel, emotion=anger).",
+    "evidence": []
+  },
+  {
+    "id": "aggregate.exact_count_0003",
+    "q_type": "aggregate",
+    "subtype": "exact_count",
+    "answer_format": "numeric",
+    "question": "Identify how many instances Monica shows 'fear' in all the conversations recorded.",
+    "tolerance": 0,
+    "ground_truth": 26,
+    "_tests": "Exact integer aggregation over (speaker=Monica, emotion=fear).",
+    "evidence": []
+  },
+  {
+    "id": "aggregate.exact_count_0004",
+    "q_type": "aggregate",
+    "subtype": "exact_count",
+    "answer_format": "numeric",
+    "question": "Hey, could you let me know the number of times Ross shows 'joy' throughout all the conversations?",
+    "tolerance": 0,
+    "ground_truth": 263,
+    "_tests": "Exact integer aggregation over (speaker=Ross, emotion=joy).",
+    "evidence": []
+  },
+  {
+    "id": "aggregate.pairwise_comparison_0000",
+    "q_type": "aggregate",
+    "subtype": "pairwise_comparison",
+    "answer_format": "mcq_single",
+    "question": "Analyzing the enrolled corpus, which speaker, Ross or Chandler, displays 'fear' with greater frequency?",
+    "choices": [
+      "Ross",
+      "Chandler"
+    ],
+    "ground_truth": "Chandler",
+    "_tests": "Pairwise count comparison — Chandler 54 vs Ross 43.",
+    "evidence": []
+  },
+  {
+    "id": "aggregate.pairwise_comparison_0001",
+    "q_type": "aggregate",
+    "subtype": "pairwise_comparison",
+    "answer_format": "mcq_single",
+    "question": "When considering the enrolled corpus, which of these two expresses 'disgust' more frequently: Chandler or Monica?",
+    "choices": [
+      "Chandler",
+      "Monica"
+    ],
+    "ground_truth": "Monica",
+    "_tests": "Pairwise count comparison — Monica 54 vs Chandler 45.",
+    "evidence": []
+  },
+  {
+    "id": "aggregate.pairwise_comparison_0002",
+    "q_type": "aggregate",
+    "subtype": "pairwise_comparison",
+    "answer_format": "mcq_single",
+    "question": "Who shows 'surprise' more often: Rachel or Joey?",
+    "choices": [
+      "Rachel",
+      "Joey"
+    ],
+    "ground_truth": "Rachel",
+    "_tests": "Pairwise count comparison — Rachel 207 vs Joey 198.",
+    "evidence": []
+  },
+  {
+    "id": "aggregate.pairwise_comparison_0003",
+    "q_type": "aggregate",
+    "subtype": "pairwise_comparison",
+    "answer_format": "mcq_single",
+    "question": "Who shows 'anger' more frequently: Joey or Phoebe?",
+    "choices": [
+      "Joey",
+      "Phoebe"
+    ],
+    "ground_truth": "Phoebe",
+    "_tests": "Pairwise count comparison — Phoebe 172 vs Joey 169.",
+    "evidence": []
+  },
+  {
+    "id": "aggregate.pairwise_comparison_0004",
+    "q_type": "aggregate",
+    "subtype": "pairwise_comparison",
+    "answer_format": "mcq_single",
+    "question": "Within the recorded dataset, which individual, Ross or Joey, exhibits 'joy' more frequently?",
+    "choices": [
+      "Ross",
+      "Joey"
+    ],
+    "ground_truth": "Joey",
+    "_tests": "Pairwise count comparison — Joey 279 vs Ross 263.",
+    "evidence": []
+  },
+  {
+    "id": "audio_identity.semantic_0000",
+    "q_type": "audio_identity",
+    "subtype": "semantic",
+    "answer_format": "free_form",
+    "question": "In the attached audio clip, who is speaking and what did they express regarding 'Did'?",
+    "ground_truth": "Speaker: Chandler. About Did: Chandler mentioned forgetting to pack an anvil, expressed surprise and fear about hearing something unexpected, showed joy in wanting to watch TV despite a cable outage, and reacted with anger asking if he wasn't heard.",
+    "judge_rubric": "Award full marks for correctly identifying Chandler as the speaker from the audio clip. Award additional points for accurately summarizing his remarks on the topic 'Did', noting his comments about packing, unexpected surprises, a cable issue, being sick, and being heard.",
+    "audio_path": "/home/lorenzo-concina/development/datasets/MELD.Raw/dev_splits_complete/dia22_utt5.wav",
+    "audio_file": "dia22_utt5.wav",
+    "_tests": "Cross-modal: Titanet voice match (dev probe vs enrolled) THEN speaker-filtered semantic recall about 'Did'.",
+    "evidence": [
+      {
+        "dialogue_id": 47,
+        "utterance_id": 0,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "You know, I don't think we brought enough stuff. Did you forget to pack the baby's anvil?"
+      },
+      {
+        "dialogue_id": 180,
+        "utterance_id": 6,
+        "speaker": "Chandler",
+        "emotion": "surprise",
+        "sentiment": "negative",
+        "utterance": "Weirdest thing. Did I hearMother of God its true!"
+      },
+      {
+        "dialogue_id": 404,
+        "utterance_id": 1,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "What? No, I want to watch this. . Did your cable go out?"
+      },
+      {
+        "dialogue_id": 641,
+        "utterance_id": 1,
+        "speaker": "Chandler",
+        "emotion": "fear",
+        "sentiment": "negative",
+        "utterance": "Did she call? You-you told her I was sick right? Always tell her I am sick!"
+      },
+      {
+        "dialogue_id": 644,
+        "utterance_id": 2,
+        "speaker": "Chandler",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Did you not hear me say, \"Du-ude?!\""
+      }
+    ]
+  },
+  {
+    "id": "audio_identity.semantic_0001",
+    "q_type": "audio_identity",
+    "subtype": "semantic",
+    "answer_format": "free_form",
+    "question": "What insight does the speaker in the attached audio clip share about the topic 'Very'?",
+    "ground_truth": "Speaker: Ross. About Very: Ross expresses joy when presenting Sarah Tuttle's Private Very Special Spacecamp and finds it very exciting to be involved in something with 18 pages, front and back.",
+    "judge_rubric": "Evaluate if the respondent correctly identifies the speaker's identity from the audio clip. Then, check if they accurately summarize the speaker's remarks about 'Very', mentioning the excitement associated with Sarah Tuttle's Private Very Special Spacecamp and the detailed involvement with 18 pages.",
+    "audio_path": "/home/lorenzo-concina/development/datasets/MELD.Raw/dev_splits_complete/dia85_utt2.wav",
+    "audio_file": "dia85_utt2.wav",
+    "_tests": "Cross-modal: Titanet voice match (dev probe vs enrolled) THEN speaker-filtered semantic recall about 'Very'.",
+    "evidence": [
+      {
+        "dialogue_id": 368,
+        "utterance_id": 1,
+        "speaker": "Ross",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Presenting Sarah Tuttles Private Very Special Spacecamp!"
+      },
+      {
+        "dialogue_id": 959,
+        "utterance_id": 9,
+        "speaker": "Ross",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Okay, Ill be up in,  18 pages. Front and back. Very exciting."
+      }
+    ]
+  },
+  {
+    "id": "audio_identity.semantic_0002",
+    "q_type": "audio_identity",
+    "subtype": "semantic",
+    "answer_format": "free_form",
+    "question": "Listening to the speaker in the attached audio clip, identify who they are. Then, recall what this individual has said about the topic 'Fine' from previous discussions.",
+    "ground_truth": "Speaker: Chandler. About Fine: Chandler expressed joy with the exclamation 'Fine! Maybe I will too!' and mentioned 'fine Italian craftsmanship' neutrally while also using the term simply as 'Fine.'",
+    "judge_rubric": "Award points if the response correctly identifies the speaker from the audio. Also, award points if the participant accurately captures Chandler's remarks about 'Fine,' especially capturing the expressions of joy and neutral references.",
+    "audio_path": "/home/lorenzo-concina/development/datasets/MELD.Raw/dev_splits_complete/dia70_utt1.wav",
+    "audio_file": "dia70_utt1.wav",
+    "_tests": "Cross-modal: Titanet voice match (dev probe vs enrolled) THEN speaker-filtered semantic recall about 'Fine'.",
+    "evidence": [
+      {
+        "dialogue_id": 258,
+        "utterance_id": 6,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Fine! Maybe I will too!"
+      },
+      {
+        "dialogue_id": 412,
+        "utterance_id": 6,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Stunning entertainment center. Fine,  fine Italian craftsmanship."
+      },
+      {
+        "dialogue_id": 523,
+        "utterance_id": 17,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Fine."
+      }
+    ]
+  },
+  {
+    "id": "audio_identity.semantic_0003",
+    "q_type": "audio_identity",
+    "subtype": "semantic",
+    "answer_format": "free_form",
+    "question": "In the attached audio clip, the speaker shares some stories involving the theme of 'Last.' What does the speaker say about this topic?",
+    "ground_truth": "Speaker: Rachel. About Last: Rachel mentions feeling something last night, leading her to go into Joey's room while he was sleeping. She also describes how last weekend, she amusingly went from store to store sitting on Santa's lap. Additionally, she talks about someone teaching others how to make napkin swans last night.",
+    "judge_rubric": "To score full points, the respondent must correctly identify the speaker as Rachel and accurately summarize her comments about 'Last.' The summary should include Rachel's action involving Joey's room, her anecdote about sitting on Santa's lap last weekend, and the teaching of napkin swans.",
+    "audio_path": "/home/lorenzo-concina/development/datasets/MELD.Raw/dev_splits_complete/dia69_utt9.wav",
+    "audio_file": "dia69_utt9.wav",
+    "_tests": "Cross-modal: Titanet voice match (dev probe vs enrolled) THEN speaker-filtered semantic recall about 'Last'.",
+    "evidence": [
+      {
+        "dialogue_id": 203,
+        "utterance_id": 4,
+        "speaker": "Rachel",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Last night! I just felt it and I went into Joeys room and he was sleeping"
+      },
+      {
+        "dialogue_id": 622,
+        "utterance_id": 13,
+        "speaker": "Rachel",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Wow! This explains so much! Last weekend, I went from store to store sitting on Santas lap."
+      },
+      {
+        "dialogue_id": 1007,
+        "utterance_id": 14,
+        "speaker": "Rachel",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "Last night she was teaching everybody how to make napkin....  swans."
+      }
+    ]
+  },
+  {
+    "id": "audio_identity.semantic_0004",
+    "q_type": "audio_identity",
+    "subtype": "semantic",
+    "answer_format": "free_form",
+    "question": "Identify the speaker in the attached audio clip and tell me what this person said about Yemen.",
+    "ground_truth": "Speaker: Chandler. About Yemen: Chandler mentions needing a fake ticket to Yemen and states that he is being transferred there, responding with some frustration.",
+    "judge_rubric": "Award points separately for correctly identifying the speaker from the voice, and accurately summarizing what the speaker said about Yemen. For identity, full points if the correct speaker is named. For content, full points if the summary captures the essence of wanting a fake ticket to Yemen and feeling angry about being transferred there. Partial points if only one part is correct.",
+    "audio_path": "/home/lorenzo-concina/development/datasets/MELD.Raw/dev_splits_complete/dia106_utt1.wav",
+    "audio_file": "dia106_utt1.wav",
+    "_tests": "Cross-modal: Titanet voice match (dev probe vs enrolled) THEN speaker-filtered semantic recall about 'Yemen'.",
+    "evidence": [
+      {
+        "dialogue_id": 72,
+        "utterance_id": 0,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Okay. Then I guess its just, wait here then.   Hi. I need one fake ticket to Yemen."
+      },
+      {
+        "dialogue_id": 923,
+        "utterance_id": 9,
+        "speaker": "Chandler",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Okay, could you just stop talking for a second?  Yemen. Thats right, yes, Im being transferred to Yemen!"
+      }
+    ]
+  }
+]

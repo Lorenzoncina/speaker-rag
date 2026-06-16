@@ -52,6 +52,7 @@ from tests.eval_speaker_verification import (
     format_summary,
     run_experiment_direct_audio,
     run_experiment_rag_text,
+    run_experiment_rag_text_pair,
     save_results,
 )
 
@@ -106,8 +107,11 @@ def _clear_db(fastapi_url: str) -> None:
 
 
 def _ingest_voxceleb(fastapi_url: str, per_speaker: int, probe_rel_paths) -> None:
-    _log(f"Ingesting VoxCeleb1 (per_speaker={per_speaker}, "
-         f"probe_excluded={len(probe_rel_paths)})...")
+    n = len(probe_rel_paths)
+    if n == 1 and probe_rel_paths[0].startswith("__no_probe_exclusion"):
+        _log(f"Ingesting VoxCeleb1 (per_speaker={per_speaker}, probe exclusion DISABLED)...")
+    else:
+        _log(f"Ingesting VoxCeleb1 (per_speaker={per_speaker}, probe_excluded={n})...")
     payload = {"per_speaker": per_speaker, "probe_rel_paths": probe_rel_paths}
     r = requests.post(
         f"{fastapi_url}/admin/ingest_voxceleb",
@@ -146,15 +150,19 @@ def _exp1(pairs, out_dir: str) -> str:
 
 
 def _exp_rag(pairs, fastapi_url: str, exp_id: str, rag_tag: str,
-             label: str, out_dir: str, text_pipe) -> str:
-    _log(f"=== Experiment {exp_id}: {label} ===")
-    scores, labels = run_experiment_rag_text(
+             label: str, out_dir: str, text_pipe, pair_mode: bool = False) -> str:
+    _log(f"=== Experiment {exp_id}: {label}{' [pair-mode]' if pair_mode else ''} ===")
+    runner = run_experiment_rag_text_pair if pair_mode else run_experiment_rag_text
+    scores, labels = runner(
         pairs, text_pipe, fastapi_url,
         progress_callback=_progress_logger(f"Exp {exp_id}"),
     )
+    extra = {"dataset": "vox1", "rag": rag_tag}
+    if pair_mode:
+        extra["mode"] = "pair"
     path, _ = save_results(out_dir, exp_id, scores, labels,
                             "Qwen/Qwen2-7B-Instruct",
-                            extra={"dataset": "vox1", "rag": rag_tag})
+                            extra=extra)
     summary = format_summary(f"{exp_id} (Vox1)", label, scores, labels, path)
     _log(summary)
     return summary
@@ -195,6 +203,21 @@ def main():
                         help="Skip DB clear before Exp 2 (use current DB state).")
     parser.add_argument("--skip-ingest", action="store_true",
                         help="Skip /admin/ingest_voxceleb before Exp 3 (assume already enrolled).")
+    parser.add_argument("--no-probe-exclusion", action="store_true",
+                        help=("Disable probe-file exclusion at enrollment. Lets all 40 Vox1-O "
+                              "speakers get 10 utterances enrolled, accepting that some enrolled "
+                              "files also appear as probes in trial pairs. The 0.99 cosine cap "
+                              "at retrieval filters exact self-matches, so the probe is verified "
+                              "against the 9 *other* enrolled utterances of that speaker. "
+                              "Required when running Exp 3 on the full 37,611-pair Vox1-O — "
+                              "otherwise 14 speakers fail to enroll (100%% probe coverage)."))
+    parser.add_argument("--pair-mode", action="store_true",
+                        help=("Pair-mode retrieval for Exp 2 and Exp 3: both pair audios are "
+                              "sent in a single /rag/retrieve call so they share a session_id, "
+                              "letting the backend's intra-call union-find cluster them when "
+                              "TitaNet cosine >= 0.45. Collapses the random Unknown_Speaker hash "
+                              "to a shared identifier for same-speaker unenrolled pairs. Cost: "
+                              "no FactSheet cache, ~8x retrieval calls (~16-24h on full Vox1-O)."))
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR,
                         help="Where to drop the per-experiment JSON results.")
     args = parser.parse_args()
@@ -213,8 +236,15 @@ def main():
         sys.exit(1)
 
     pairs = _ensure_pairs(args.pairs, args.n_pairs, args.regenerate_pairs)
-    probe_rel_paths = _collect_probe_rel_paths(pairs)
-    _log(f"Probe files to exclude from enrollment: {len(probe_rel_paths)}")
+    if args.no_probe_exclusion:
+        # Endpoint falls back to the FULL Vox1-O probe list when probe_rel_paths is
+        # empty/None, which is the broken-by-default behaviour. A non-empty list with
+        # a sentinel path that can't match any real file disables exclusion cleanly.
+        probe_rel_paths = ["__no_probe_exclusion__/sentinel.wav"]
+        _log("Probe-file exclusion DISABLED (--no-probe-exclusion).")
+    else:
+        probe_rel_paths = _collect_probe_rel_paths(pairs)
+        _log(f"Probe files to exclude from enrollment: {len(probe_rel_paths)}")
 
     summaries = []
     text_pipe = None  # lazy-loaded if any RAG experiment runs
@@ -236,6 +266,7 @@ def main():
         summaries.append(_exp_rag(
             pairs, args.fastapi_url, "2", "no_enrollment",
             "Qwen/Qwen2-7B-Instruct + RAG (empty DB)", args.out_dir, text_pipe,
+            pair_mode=args.pair_mode,
         ))
 
     # Experiment 3 — RAG with VoxCeleb1 enrolled.
@@ -247,6 +278,7 @@ def main():
         summaries.append(_exp_rag(
             pairs, args.fastapi_url, "3", "vox1_enrolled",
             "Qwen/Qwen2-7B-Instruct + RAG (VoxCeleb1 enrolled)", args.out_dir, text_pipe,
+            pair_mode=args.pair_mode,
         ))
 
     # Final recap so the tail of the log is easy to skim.

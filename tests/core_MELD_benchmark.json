@@ -1,0 +1,442 @@
+[
+  {
+    "id": "identity_0000",
+    "q_type": "identity",
+    "question": "Who said: 'Reset button, reset button, where is there a reset button?'",
+    "ground_truth": "Phoebe",
+    "evidence": [
+      {
+        "dialogue_id": 482,
+        "utterance_id": 14,
+        "speaker": "Phoebe",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Reset button, reset button, where is there a reset button?"
+      }
+    ]
+  },
+  {
+    "id": "identity_0001",
+    "q_type": "identity",
+    "question": "Who said: 'Oh, yeah, Bob said there might be flood damage.'?",
+    "ground_truth": "Phoebe",
+    "evidence": [
+      {
+        "dialogue_id": 16,
+        "utterance_id": 4,
+        "speaker": "Phoebe",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Oh, yeah, Bob said there might be flood damage."
+      }
+    ]
+  },
+  {
+    "id": "identity_0002",
+    "q_type": "identity",
+    "question": "Who said: 'That was a test. Good response. All right, full name.'?",
+    "ground_truth": "Joey",
+    "evidence": [
+      {
+        "dialogue_id": 418,
+        "utterance_id": 5,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "That was a test. Good response. All right, full name."
+      }
+    ]
+  },
+  {
+    "id": "emotion_grounded_0000",
+    "q_type": "emotion_grounded",
+    "question": "What emotion was Phoebe expressing when she said 'I dont have time to convince you because hes only here for four hours, and Im gonna go see him!'?",
+    "ground_truth": "anger",
+    "evidence": [
+      {
+        "dialogue_id": 295,
+        "utterance_id": 16,
+        "speaker": "Phoebe",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "I dont have time to convince you because hes only here for four hours, and Im gonna go see him!"
+      }
+    ]
+  },
+  {
+    "id": "emotion_grounded_0001",
+    "q_type": "emotion_grounded",
+    "question": "What emotion did Chandler express when he said 'Forty-five minutes? We have tickets to the'?",
+    "ground_truth": "surprise",
+    "evidence": [
+      {
+        "dialogue_id": 1019,
+        "utterance_id": 5,
+        "speaker": "Chandler",
+        "emotion": "surprise",
+        "sentiment": "negative",
+        "utterance": "Forty-five minutes? We have tickets to the"
+      }
+    ]
+  },
+  {
+    "id": "emotion_grounded_0002",
+    "q_type": "emotion_grounded",
+    "question": "What emotion did Rachel express when she said 'What?! Why? Joey you were so ready for it!'?",
+    "ground_truth": "surprise",
+    "evidence": [
+      {
+        "dialogue_id": 856,
+        "utterance_id": 3,
+        "speaker": "Rachel",
+        "emotion": "surprise",
+        "sentiment": "negative",
+        "utterance": "What?! Why? Joey you were so ready for it!"
+      }
+    ]
+  },
+  {
+    "id": "semantic_recall_0000",
+    "q_type": "semantic_recall",
+    "question": "What did Ross say about the Knicks?",
+    "ground_truth": "Ross suggested they could get tickets to another Knicks game and use that as an opportunity to invite someone.",
+    "evidence": [
+      {
+        "dialogue_id": 969,
+        "utterance_id": 2,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Like uh, maybe we could get him to get tickets to another Knicks game and invite him."
+      }
+    ]
+  },
+  {
+    "id": "semantic_recall_0001",
+    "q_type": "semantic_recall",
+    "question": "What did Rachel say about Danny?",
+    "ground_truth": "Rachel said she saw Danny getting on the subway with a girl who had his arm around her, implying he may be in a romantic situation with someone else.",
+    "evidence": [
+      {
+        "dialogue_id": 182,
+        "utterance_id": 1,
+        "speaker": "Rachel",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "I just saw Danny getting on the subway with a girl and he had his arm around her."
+      }
+    ]
+  },
+  {
+    "id": "semantic_recall_0002",
+    "q_type": "semantic_recall",
+    "question": "What did Rachel say about Bobby?",
+    "ground_truth": "Rachel questioned whether forcing someone to marry Bobby would achieve a desired outcome, and she also directly addressed Bobby, suggesting he come over so others could have a private moment.",
+    "evidence": [
+      {
+        "dialogue_id": 54,
+        "utterance_id": 1,
+        "speaker": "Rachel",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "So forcing her to marry Bobby is gonna make that happen?"
+      },
+      {
+        "dialogue_id": 54,
+        "utterance_id": 21,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Okay Bobby, why dont we just come over here and let them have a little moment."
+      }
+    ]
+  },
+  {
+    "id": "graph_reasoning_0000",
+    "q_type": "graph_reasoning",
+    "question": "In a conversation where Joey got angry after feeling passed over for the best man role, insisting 'You just said I could!' — who else was present in that discussion?",
+    "ground_truth": "Chandler, Ross",
+    "evidence": [
+      {
+        "dialogue_id": 1035,
+        "utterance_id": 0,
+        "speaker": "Joey",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "What about me?! You-you just said I could!"
+      },
+      {
+        "dialogue_id": 1035,
+        "utterance_id": 1,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Im not even getting married! Okay, this is a question for science fiction writers!"
+      },
+      {
+        "dialogue_id": 1035,
+        "utterance_id": 2,
+        "speaker": "Joey",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "I cant believe youre not picking me."
+      },
+      {
+        "dialogue_id": 1035,
+        "utterance_id": 3,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Hey, how can it"
+      },
+      {
+        "dialogue_id": 1035,
+        "utterance_id": 4,
+        "speaker": "Chandler",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Im not even Im not even"
+      },
+      {
+        "dialogue_id": 1035,
+        "utterance_id": 5,
+        "speaker": "Ross",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Fine, yknow what, thats it. From now on, Joey, I want you to be my best man."
+      },
+      {
+        "dialogue_id": 1035,
+        "utterance_id": 6,
+        "speaker": "Joey",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Yes!  Shame about you man."
+      }
+    ]
+  },
+  {
+    "id": "graph_reasoning_0001",
+    "q_type": "graph_reasoning",
+    "question": "In a conversation where Monica sadly admitted she eats alone in the alley because everyone hates her — while Ross was trying to make a point about workplace social divisions between waiters and chefs — who else was present in that scene?",
+    "ground_truth": "Joey, Rachel, Ross",
+    "evidence": [
+      {
+        "dialogue_id": 218,
+        "utterance_id": 1,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Okay, Mon, back me up here."
+      },
+      {
+        "dialogue_id": 218,
+        "utterance_id": 2,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Where you work the uh, waiters eat with the waiters, right?"
+      },
+      {
+        "dialogue_id": 218,
+        "utterance_id": 3,
+        "speaker": "Ross",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "And the chefs eat with the other chefs, right?"
+      },
+      {
+        "dialogue_id": 218,
+        "utterance_id": 4,
+        "speaker": "Monica",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "I eat by myself in the alley because everybody hates me."
+      },
+      {
+        "dialogue_id": 218,
+        "utterance_id": 5,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Look, Ross, really its-its no big deal."
+      },
+      {
+        "dialogue_id": 218,
+        "utterance_id": 6,
+        "speaker": "Joey",
+        "emotion": "sadness",
+        "sentiment": "negative",
+        "utterance": "Yknow you wear a white coat, I wear a blue blazer, if that means we cant be friends at work, then so be it."
+      },
+      {
+        "dialogue_id": 218,
+        "utterance_id": 7,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Yknow, hey I understand."
+      },
+      {
+        "dialogue_id": 218,
+        "utterance_id": 8,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Yknow?"
+      },
+      {
+        "dialogue_id": 218,
+        "utterance_id": 9,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Hey, when Im in a play and youre in the audience, I dont talk to you, right?"
+      },
+      {
+        "dialogue_id": 218,
+        "utterance_id": 10,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "So its yknow, its uh, its cool."
+      },
+      {
+        "dialogue_id": 218,
+        "utterance_id": 11,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Ill see you tomorrow."
+      },
+      {
+        "dialogue_id": 218,
+        "utterance_id": 12,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "Yeah, when were in the audience he doesnt talk to us, but he does wave."
+      }
+    ]
+  },
+  {
+    "id": "graph_reasoning_0002",
+    "q_type": "graph_reasoning",
+    "question": "In a scene where Rachel got angry and tried to bribe someone by offering ten free [items], with another character complaining that no one could see him, who else was in the conversation besides Rachel?",
+    "ground_truth": "Chandler, Joey",
+    "evidence": [
+      {
+        "dialogue_id": 885,
+        "utterance_id": 0,
+        "speaker": "Chandler",
+        "emotion": "joy",
+        "sentiment": "positive",
+        "utterance": "Can you people not see me?!"
+      },
+      {
+        "dialogue_id": 885,
+        "utterance_id": 1,
+        "speaker": "Rachel",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "So, will you talk to him?"
+      },
+      {
+        "dialogue_id": 885,
+        "utterance_id": 2,
+        "speaker": "Joey",
+        "emotion": "neutral",
+        "sentiment": "neutral",
+        "utterance": "I dont know Rach."
+      },
+      {
+        "dialogue_id": 885,
+        "utterance_id": 3,
+        "speaker": "Rachel",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Oh, come on! Ill give you ten free"
+      },
+      {
+        "dialogue_id": 885,
+        "utterance_id": 4,
+        "speaker": "Joey",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "One!  No ten! You said ten! You cant take that back!"
+      }
+    ]
+  },
+  {
+    "id": "emotion_profile_0000",
+    "q_type": "emotion_profile",
+    "question": "How many times does Phoebe express anger across the entire corpus?",
+    "ground_truth": "Phoebe expresses anger 172 times across the corpus.",
+    "evidence": [
+      {
+        "dialogue_id": 10,
+        "utterance_id": 0,
+        "speaker": "Phoebe",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Nobody!"
+      },
+      {
+        "dialogue_id": 10,
+        "utterance_id": 1,
+        "speaker": "Phoebe",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Nobody respects the bucket!"
+      }
+    ]
+  },
+  {
+    "id": "emotion_profile_0001",
+    "q_type": "emotion_profile",
+    "question": "How many times does Chandler express fear across the entire corpus?",
+    "ground_truth": "Chandler expresses fear 54 times across the corpus.",
+    "evidence": [
+      {
+        "dialogue_id": 0,
+        "utterance_id": 10,
+        "speaker": "Chandler",
+        "emotion": "fear",
+        "sentiment": "negative",
+        "utterance": "No dont I beg of you!"
+      },
+      {
+        "dialogue_id": 33,
+        "utterance_id": 0,
+        "speaker": "Chandler",
+        "emotion": "fear",
+        "sentiment": "negative",
+        "utterance": "Will you marry me?"
+      }
+    ]
+  },
+  {
+    "id": "emotion_profile_0002",
+    "q_type": "emotion_profile",
+    "question": "How many times does Ross express anger across the entire corpus?",
+    "ground_truth": "Ross expresses anger 162 times across the corpus.",
+    "evidence": [
+      {
+        "dialogue_id": 7,
+        "utterance_id": 1,
+        "speaker": "Ross",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "What?! What is with everybody? Its Thanksgiving, not...Truth-Day!"
+      },
+      {
+        "dialogue_id": 15,
+        "utterance_id": 0,
+        "speaker": "Ross",
+        "emotion": "anger",
+        "sentiment": "negative",
+        "utterance": "Get Out!"
+      }
+    ]
+  }
+]

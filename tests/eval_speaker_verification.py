@@ -58,6 +58,19 @@ TEXT_VERIFICATION_TEMPLATE = (
 )
 
 
+# Pair-mode template: the backend returns a single FactSheet that already
+# contains both audios as labelled tracks ("--- Audio Track 1 (File: ...) ---",
+# "--- Audio Track 2 (File: ...) ---"), so we paste it in as-is.
+TEXT_VERIFICATION_PAIR_TEMPLATE = (
+    "You are given speaker-identification information for two audio recordings, "
+    "produced by an upstream speaker-recognition system. The fact sheet below "
+    "contains both audios as 'Audio Track 1' and 'Audio Track 2'.\n\n"
+    "{combined_fact_sheet}\n\n"
+    "Based on the information above, are the two audios from the same speaker? "
+    "Answer with a single word: Yes or No."
+)
+
+
 # ---------------------------------------------------------------------------
 # EER
 
@@ -249,6 +262,138 @@ def run_experiment_rag_text(
             labels.append(p["label"])
         except Exception as e:
             print(f"[exp-rag] pair {i} failed: {e}")
+        if progress_callback:
+            progress_callback(i + 1, len(pairs))
+    return np.array(scores), np.array(labels)
+
+
+# ---------------------------------------------------------------------------
+# Pair-mode variant: both audios in one /rag/retrieve call.
+#
+# When both probes share a session, the backend's intra-call union-find merges
+# them if their TitaNet cosine ≥ 0.45, so same-speaker unenrolled pairs collapse
+# to one Unknown_Speaker_<X> identity instead of two random hashes. This trades
+# the FactSheet cache for a meaningful no-enrollment baseline; runtime ≈ 8×
+# the cached variant because each pair = one retrieval call.
+
+def _get_fact_sheet_pair(audio_a: str, audio_b: str, fastapi_url: str,
+                          question: str) -> str:
+    """Single /rag/retrieve call for both audios in a pair.
+
+    Returns the combined FactSheet string the backend assembles, which already
+    contains both audios as 'Audio Track 1' and 'Audio Track 2' sections —
+    suitable for the pair-mode prompt template.
+    """
+    with open(audio_a, "rb") as fa, open(audio_b, "rb") as fb:
+        files = [
+            ("audios", (os.path.basename(audio_a), fa, "audio/wav")),
+            ("audios", (os.path.basename(audio_b), fb, "audio/wav")),
+        ]
+        data = {"question": question}
+        r = requests.post(f"{fastapi_url}/rag/retrieve", files=files,
+                          data=data, timeout=180)
+    if r.status_code != 200:
+        raise RuntimeError(f"FastAPI {r.status_code}: {r.text[:300]}")
+    return r.json().get("fact_sheet", "")
+
+
+def _split_pair_fact_sheet(combined: str) -> Tuple[str, str]:
+    """Slice a pair-mode combined FactSheet into per-track sections.
+
+    The combined FactSheet has the shape:
+
+        === FACT SHEET: AUDIO FILE RESOLUTION ===
+        --- Audio Track 1 (File: ...) ---
+        Speaker Profile: ...
+        --- Audio Track 2 (File: ...) ---
+        Speaker Profile: ...
+
+        === SEMANTIC SEARCH ... ===   ← mixes both speakers' utterances
+        === KNOWLEDGE GRAPH ... ===   ← mixes both speakers' facts
+
+    The tail sections are filtered on the union of identified users
+    (rag.py:660), so they look identical for same-speaker and different-speaker
+    pairs and effectively mask the `Identity:` signal. We drop them and keep
+    only the two per-track Speaker Profile blocks.
+
+    Returns (track1, track2). On unexpected layouts, returns the original
+    string as track1 and an empty string as track2 (the LLM will still see
+    something and the call won't crash).
+    """
+    t1_start = combined.find("--- Audio Track 1")
+    t2_start = combined.find("--- Audio Track 2")
+    if t1_start == -1 or t2_start == -1:
+        return combined.strip(), ""
+
+    track1 = combined[t1_start:t2_start].rstrip()
+
+    # Track 2 runs from its header to the first trailing "=== " section header
+    # (semantic / KG), or to end-of-string if there isn't one.
+    rest = combined[t2_start:]
+    tail = rest.find("\n=== ", 1)  # skip pos 0 so the "--- Audio Track 2" header itself isn't matched
+    track2 = (rest[:tail] if tail != -1 else rest).rstrip()
+    return track1, track2
+
+
+def _llr_text_llm_pair(text_pipeline, combined_fact_sheet: str) -> float:
+    """Yes/No → LLR for the pair-mode prompt (single combined FactSheet).
+
+    Reuses the non-pair-mode template (`TEXT_VERIFICATION_TEMPLATE`) with the
+    two per-track sections extracted from the combined FactSheet. The mixed
+    semantic / KG tail of the combined FactSheet was masking the Identity
+    signal — see `_split_pair_fact_sheet` for the rationale.
+    """
+    tokenizer = text_pipeline.tokenizer
+    model = text_pipeline.model
+
+    fs_a, fs_b = _split_pair_fact_sheet(combined_fact_sheet)
+    user_msg = TEXT_VERIFICATION_TEMPLATE.format(fs_a=fs_a, fs_b=fs_b)
+    messages = [
+        {"role": "system",
+         "content": "You are a precise speaker-verification assistant. Answer only Yes or No."},
+        {"role": "user", "content": user_msg},
+    ]
+    formatted = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    inputs = tokenizer(formatted, return_tensors="pt").to(model.device)
+
+    with torch.no_grad():
+        outputs = model(**inputs)
+    logits = outputs.logits[0, -1, :].float()
+    log_probs = torch.log_softmax(logits, dim=-1)
+    yes_id, no_id = _yes_no_ids(tokenizer)
+    llr = float(log_probs[yes_id] - log_probs[no_id])
+
+    if not hasattr(_llr_text_llm_pair, "_logged"):
+        _llr_text_llm_pair._logged = True
+        top5 = torch.topk(log_probs, 5)
+        top5_decoded = [(tokenizer.decode([i]), round(v, 3))
+                        for i, v in zip(top5.indices.tolist(), top5.values.tolist())]
+        print(f"[debug pair] first-token top-5: {top5_decoded}  yes_id={yes_id} no_id={no_id}")
+
+    return llr
+
+
+def run_experiment_rag_text_pair(
+    pairs: List[dict],
+    text_pipeline,
+    fastapi_url: str,
+    rag_question: str = "Who is the speaker in this audio?",
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Pair-mode RAG experiment: one /rag/retrieve call per pair."""
+    scores, labels = [], []
+    for i, p in enumerate(pairs):
+        try:
+            combined = _get_fact_sheet_pair(
+                p["audio1"], p["audio2"], fastapi_url, rag_question
+            )
+            llr = _llr_text_llm_pair(text_pipeline, combined)
+            scores.append(llr)
+            labels.append(p["label"])
+        except Exception as e:
+            print(f"[exp-rag-pair] pair {i} failed: {e}")
         if progress_callback:
             progress_callback(i + 1, len(pairs))
     return np.array(scores), np.array(labels)
