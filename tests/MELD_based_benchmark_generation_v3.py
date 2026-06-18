@@ -204,11 +204,11 @@ def build_context(train_df, dev_df, meld_root) -> SimpleNamespace:
     main_df = train_df[train_df.Speaker.isin(MAIN_SPEAKERS)]
 
     # entity token -> {speaker: [evidence rows]} over enrolled (train) main speakers
+    # _entity_tokens() keeps only mid-sentence capitalized tokens (proper nouns),
+    # dropping sentence-initial "She", "Did", "Can", "Last", "Very", "Fine", etc.
     ent: Dict[str, Dict[str, List[Dict]]] = defaultdict(lambda: defaultdict(list))
     for r in main_df.itertuples(index=False):
-        for tok in set(re.findall(r"\b[A-Z][a-z]{2,}\b", r.Utterance)):
-            if tok in MAIN_SPEAKERS or tok in TOPIC_BLOCKLIST or tok in SURNAME_BLOCKLIST:
-                continue
+        for tok in _entity_tokens(r.Utterance):
             ent[tok][r.Speaker].append({
                 "dialogue_id": int(r.Dialogue_ID),
                 "utterance_id": int(r.Utterance_ID),
@@ -537,7 +537,11 @@ def s_agg_argmax(ctx, k, rng):
     out = []
     for emo in emotions[:k]:
         ranking = emo_ranking(ctx, emo)
-        if ranking[0][1] == 0 or ranking[0][1] == ranking[1][1]:
+        top, second = ranking[0][1], ranking[1][1]
+        # Margin guard: skip near-ties that Voxtral classifier noise can flip
+        if top == 0 or top == second:
+            continue
+        if top < second * 1.15 or (top - second) < 10:
             continue
         rank_str = ", ".join(f"{s} {c}" for s, c in ranking)
         out.append({
@@ -574,6 +578,9 @@ def s_agg_pairwise(ctx, k, rng):
         if len(ranking) < 2 or ranking[0][1] == ranking[1][1]:
             continue
         a, b = ranking[0], ranking[1]
+        # Pairwise margin guard: only keep pairs with a clear winner
+        if a[1] < b[1] * 1.20 or (a[1] - b[1]) < 10:
+            continue
         choices = [a[0], b[0]]
         rng.shuffle(choices)
         out.append({
@@ -682,7 +689,7 @@ Given a speaker, a topic, and the speaker's hit utterances about it, phrase "Sum
 Given the full utterance, choose ONE distinctive contiguous span (a rare noun/phrase, ideally from distinctive_tokens) and replace it with "___" to make the question, prefixed "Complete this <speaker> quote from one of the enrolled conversations: ". Set ground_truth to the EXACT removed span (verbatim, as it appears) and accept_variants to plausible spellings/casings. The removed span MUST be copied verbatim from the utterance. Reject if no distinctive span exists.
 {_JSON} {{"keep": <bool>, "reason": "<short>", "question": "<str>", "ground_truth": "<removed span>", "accept_variants": ["<...>"]}}""",
 
-    #"graph.co_speakers": f"""You phrase a co-presence question.
+   # "graph.co_speakers": f"""You phrase a co-presence question.
 #Given an anchor (speaker, emotion, utterance) from a multi-speaker dialogue, phrase "In the conversation where <anchor_speaker> got <emotion> and said/insisted '<short paraphrase or quote>', which other main friends were present?" You MAY name the anchor speaker (they are excluded from the answer). Do NOT list the other speakers. Reject if the anchor moment is too generic to identify.
 #{_JSON} {{"keep": <bool>, "reason": "<short>", "question": "<str>"}}""",
 
