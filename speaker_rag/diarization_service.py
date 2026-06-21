@@ -418,11 +418,15 @@ def Diarization_Service(embedding_model, device: str, hf_auth_token: str = None)
         print("[Diarization] Loading pyannote speaker diarization pipeline...")
         try:
             from pyannote.audio import Pipeline as PyannotePipeline
-        except ImportError:
+        except ImportError as e:
             raise ImportError(
-                "pyannote.audio is required for conversation diarization. "
-                "Install it with: pip install pyannote.audio==4.0.4"
-            )
+                "pyannote.audio could not be imported for conversation diarization "
+                "(install it with: pip install pyannote.audio==4.0.4). NOTE: this is "
+                "also raised when pyannote IS installed but a transitive dependency "
+                "fails to import (e.g. an opentelemetry-exporter-otlp-proto-http "
+                "version skew, or a torchcodec build mismatched to the torch CUDA "
+                f"runtime). Original import error: {e!r}"
+            ) from e
         pipeline_kwargs = {}
         if hf_auth_token:
             # Parameter name differs by version: 'token' (>=3.3) vs 'use_auth_token' (<3.3).

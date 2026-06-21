@@ -43,6 +43,24 @@ _PARTICIPANT_PAT = re.compile(
 )
 
 
+# Quoted spans in a question carry OBJECT names, not the asker's subject. Strip:
+#   - straight/curly double quotes,
+#   - single/curly single quotes used as delimiters (opening quote not preceded
+#     by a letter, so contractions like "Monica's" / "it's" are left intact;
+#     closing quote followed by whitespace/punctuation/end).
+_QUOTE_SPAN_RE = re.compile(
+    r'"[^"]*"'
+    r'|“[^”]*”'
+    r"|(?<![A-Za-z])['‘].*?['’](?=[\s\.\,\?\!—\-]|$)",
+    re.DOTALL,
+)
+
+
+def _strip_quoted_spans(text: str) -> str:
+    """Remove quoted spans so NER sees only the unquoted (subject-position) text."""
+    return _QUOTE_SPAN_RE.sub(" ", text or "")
+
+
 def _detect_emotion(question: str) -> Optional[str]:
     """Return the first emotion keyword found in the question, lowercase, or None."""
     if not question:
@@ -531,10 +549,33 @@ class SpeakerRAG:
         # (profile_rank restriction, entity-centric traversal), so we keep them for
         # the KG section only.
         extracted = self.extract_speakers_from_question(question)
+
+        # Distinguish a name used as the SUBJECT of the question ("what has Joey
+        # said about X") from one used as the OBJECT inside a quoted span ("the
+        # speaker who said 'Monica's not coming'"). Only subject-position speakers
+        # are a reliable retrieval filter — object names inside quotes are not, and
+        # the real speaker is often unnamed (e.g. cross_call_linking). So we filter
+        # semantic search to names that survive OUTSIDE any quoted span, and leave
+        # it unfiltered otherwise. (subject_speakers ⊆ extracted, so this reuses
+        # the single enrolled-users lookup above.)
         if extracted:
+            stripped = _strip_quoted_spans(question)
+            subject_speakers = [
+                s for s in extracted
+                if re.search(rf"\b{re.escape(s)}\b", stripped, re.IGNORECASE)
+            ]
+        else:
+            subject_speakers = []
+
+        if subject_speakers:
             resolution_note = (
-                f"Names referenced in question: {', '.join(extracted)} "
-                f"(used as graph hint only — semantic search runs unfiltered)."
+                f"Subject speaker(s) named outside any quote: {', '.join(subject_speakers)} "
+                f"— semantic search filtered to them."
+            )
+        elif extracted:
+            resolution_note = (
+                f"Names referenced ({', '.join(extracted)}) appear only inside quoted spans "
+                f"(treated as objects) — semantic search runs unfiltered."
             )
         else:
             resolution_note = "Semantic search runs unfiltered across all enrolled speakers."
@@ -545,7 +586,7 @@ class SpeakerRAG:
         fact_sheet, retrieved_dialogue_ids = self._append_semantic_section(
             context_lines=context_lines,
             question=question,
-            target_user_ids=None,
+            target_user_ids=subject_speakers if subject_speakers else None,
             session_id=None,
         )
         fact_sheet = self._append_graph_section(

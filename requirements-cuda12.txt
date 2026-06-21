@@ -117,6 +117,11 @@ onnxruntime==1.22.1
 opentelemetry-api==1.36.0
 opentelemetry-exporter-otlp-proto-common==1.36.0
 opentelemetry-exporter-otlp-proto-grpc==1.36.0
+# pyannote.audio 4.x telemetry imports the *http* otlp exporter; pin it to the
+# same 1.36.0 family. Left unpinned, pip pulls a newer http (e.g. 1.42.x) whose
+# metric_exporter imports _exporter_metrics from -common 1.36.0, which lacks it
+# -> ModuleNotFoundError that blocks `import pyannote.audio` entirely.
+opentelemetry-exporter-otlp-proto-http==1.36.0
 opentelemetry-proto==1.36.0
 opentelemetry-sdk==1.36.0
 opentelemetry-semantic-conventions==0.57b0

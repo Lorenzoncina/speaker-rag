@@ -26,6 +26,15 @@ COPY requirements-cuda13.txt /app/
 RUN pip install --no-cache-dir --use-deprecated=legacy-resolver -r requirements-cuda13.txt --extra-index-url https://download.pytorch.org/whl/cu130 && \
     pip install --no-cache-dir torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cu130
 
+# 2b. Pin torchcodec to the CPU build. pyannote.audio 4.x pulls torchcodec in
+# transitively (unpinned) and gets the latest CUDA build, which links libnvcuvid.so.1
+# (an NVIDIA video-decode driver lib not present unless the container is started with
+# the 'video' capability) -> fails to load -> diarization dies. We only decode audio
+# (pure CPU/FFmpeg work; the diarization model still runs on GPU via torch), so the
+# CPU build is correct and avoids the driver dependency. --force-reinstall overrides
+# whatever the requirements step installed; --no-deps keeps the cu130 torch in place.
+RUN pip install --no-cache-dir --force-reinstall --no-deps torchcodec==0.8.0 --index-url https://download.pytorch.org/whl/cpu
+
 # 3. Copy Application Code & Modules
 COPY speaker_rag/age_model/ /app/age_model/
 COPY speaker_rag/ /app/speaker_rag/

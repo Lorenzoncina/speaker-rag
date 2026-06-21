@@ -136,7 +136,11 @@ _ERROR_RESULT: Dict[str, Any] = {
 }
 
 
-def _audio_to_data_uri(audio_path: str, target_sr: int = 16000) -> str:
+def _audio_to_data_uri(
+    audio_path: str,
+    target_sr: int = 16000,
+    max_duration_sec: Optional[float] = None,
+) -> str:
     """Load an audio file from disk, resample to 16 kHz mono, re-encode as WAV
     PCM_16, and return a base64 data URI ready for vLLM's `audio_url` chat field.
 
@@ -144,8 +148,25 @@ def _audio_to_data_uri(audio_path: str, target_sr: int = 16000) -> str:
     URL-scheme parsing varies between versions and silently fails for some
     forms. A data URI is the universally-supported path — the audio bytes are
     in the request, no fetching/decoding of an external resource needed.
+
+    `max_duration_sec` hard-caps the clip length. Voxtral turns audio into
+    tokens, and a long single-speaker segment can push the prompt past
+    `max_model_len` — vLLM then indexes position/embedding tables out of bounds,
+    firing a CUDA `device-side assert` that poisons the entire GPU context for
+    every subsequent request (not just this one). Truncating here keeps the
+    prompt safely inside the context window; the cap is generous enough that
+    gender/age/emotion and a long transcript are unaffected for normal turns.
     """
     waveform, _sr = librosa.load(audio_path, sr=target_sr, mono=True)
+    if max_duration_sec and max_duration_sec > 0:
+        max_samples = int(max_duration_sec * target_sr)
+        if waveform.shape[0] > max_samples:
+            orig_sec = waveform.shape[0] / float(target_sr)
+            waveform = waveform[:max_samples]
+            print(
+                f"[VoxtralExtractor] truncated {audio_path} from {orig_sec:.1f}s to "
+                f"{max_duration_sec:.1f}s to stay within the model context window."
+            )
     buf = io.BytesIO()
     sf.write(buf, waveform, target_sr, format="WAV", subtype="PCM_16")
     audio_bytes = buf.getvalue()
@@ -170,12 +191,19 @@ class VoxtralExtractor:
         gpu_memory_utilization: float = 0.30,
         max_model_len: int = 8192,
         max_new_tokens: int = 1024,
+        max_audio_sec: float = 180.0,
     ):
         self.model_name = model_name
         self._device = device
         self._gpu_memory_utilization = gpu_memory_utilization
         self._max_model_len = max_model_len
         self._max_new_tokens = max_new_tokens
+        # Cap clip length so audio tokens + prompt + generation stay under
+        # max_model_len. At Voxtral's ~17 audio-tokens/sec, 180s ≈ 3k tokens —
+        # well under 8192 even with the ~260-token text prompt and 1024 output
+        # budget, and with margin for token-rate uncertainty. See
+        # _audio_to_data_uri for why exceeding max_model_len is catastrophic.
+        self._max_audio_sec = max_audio_sec
         self._model = None
         self._lock = threading.Lock()
         self._unavailable_reason: Optional[str] = None
@@ -269,7 +297,7 @@ class VoxtralExtractor:
         # Pre-decode the audio to a base64 data URI. See `_audio_to_data_uri`
         # for the rationale (mistral_common's file:// URL parsing is flaky).
         try:
-            audio_uri = _audio_to_data_uri(audio_path)
+            audio_uri = _audio_to_data_uri(audio_path, max_duration_sec=self._max_audio_sec)
         except Exception as e:
             print(f"[VoxtralExtractor] audio decode failed for {audio_path}: {e}")
             return dict(_ERROR_RESULT)
