@@ -20,7 +20,7 @@ Two subcommands:
 WHAT IS AND ISN'T COMPARABLE
   - Retrieval differs (Supermemory vs the SpeakerRAG dual-store), which is the
     point of the comparison.
-  - The ANSWERER is configurable so you control the confound:
+  - The ANSWERER is configurable so control the confound:
       --answerer backend  -> the SAME Qwen3-14B used by the SpeakerRAG run
                              (POST /llm/generate). Best for isolating RETRIEVAL.
       --answerer openai    -> an OpenAI model (--answer-model). Convenient, but
