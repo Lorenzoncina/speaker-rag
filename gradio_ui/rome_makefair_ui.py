@@ -116,6 +116,23 @@ def get_enrolled() -> Dict[str, Any]:
     return _request("GET", "/rag/enrolled", STATUS_TIMEOUT).get("enrolled_users", {}) or {}
 
 
+def clip_counts() -> Dict[str, int]:
+    """How many utterances each speaker has in the graph, keyed by user_id.
+
+    `/rag/graph_viz` caps only the *entity* nodes, so every speaker is always
+    returned with its `utterance_count`.
+    """
+    try:
+        data = _request("GET", "/rag/graph_viz", STATUS_TIMEOUT, params={"max_entities": 1})
+    except BackendError:
+        return {}
+    return {
+        str(n["id"]): int(n.get("utterance_count", 0))
+        for n in data.get("nodes", [])
+        if n.get("type") == "speaker"
+    }
+
+
 def generate(prompt: str, max_new_tokens: int = MAX_ANSWER_TOKENS) -> str:
     """Answer a prompt with the backend's LLM (Qwen3-14B in Local mode)."""
     payload = {"prompt": prompt, "max_new_tokens": int(max_new_tokens)}
@@ -252,18 +269,30 @@ def heard_card(probe: Dict[str, str]) -> str:
     )
 
 
-def enrolled_card(user_id: str, transcription: str, n_users: int) -> str:
+def enrolled_card(
+    user_id: str, transcription: str, n_users: int, is_new: bool, clips: int
+) -> str:
     quote = f'<div class="booth-quote">“{transcription}”</div>' if transcription else ""
+    if is_new:
+        title = f"🧠 <b>{user_id}</b> è entrato nella memoria"
+        body = (
+            f"La voce è ora un'identità stabile: la prossima volta il sistema "
+            f"riconoscerà <b>{user_id}</b> dal solo suono, senza nome e senza login."
+        )
+    else:
+        title = f"➕ Registrazione aggiunta al profilo di <b>{user_id}</b>"
+        body = (
+            f"Non è stata creata una nuova persona: questa voce si aggiunge a "
+            f"<b>{user_id}</b>, che ora ha <b>{clips}</b> registrazioni in memoria. "
+            f"Più campioni = riconoscimento più affidabile."
+        )
     return _card(
-        f"🧠 <b>{user_id}</b> è entrato nella memoria",
+        title,
         f"""
         {quote}
-        <div class="booth-body">
-          La voce è ora un'identità stabile: la prossima volta il sistema
-          riconoscerà <b>{user_id}</b> dal solo suono, senza nome e senza login.
-        </div>
+        <div class="booth-body">{body}</div>
         <div class="booth-muted">Persone in memoria: <b>{n_users}</b> ·
-        Guarda il nodo comparire nella scheda <b>🕸️ La memoria</b>.</div>
+        Guarda il grafo nella scheda <b>🕸️ La memoria</b>.</div>
         """,
         "#16a34a",
     )
@@ -302,20 +331,29 @@ def sanitize_name(raw: str) -> str:
     return _NAME_STRIP.sub("", first)[:24].capitalize()
 
 
-def unique_user_id(name: str, existing: Dict[str, Any]) -> str:
-    """Suffix the name if it is taken.
+def resolve_user_id(name: str, existing: Dict[str, Any], distinct_person: bool) -> Tuple[str, bool]:
+    """Map a typed name to the user_id to enroll under.
 
-    Two visitors called Marco must not share one identity: they would collapse
-    into a single speaker node and their voices would fight over the same
-    acoustic profile.
+    Returns (user_id, is_new_person).
+
+    Re-using a name is the normal case: several clips of the same person make a
+    stronger acoustic profile, and the backend stores one embedding per clip
+    under the shared user_id. So by default the name is taken literally and the
+    recording is appended to that person's profile.
+
+    `distinct_person` is the escape hatch for a genuine collision — a *different*
+    visitor who happens to be called Marco. Only then is the name suffixed, so
+    the two never share one speaker node or one voice profile.
     """
-    taken = {str(k).lower() for k in existing}
+    taken = {str(k).lower(): str(k) for k in existing}
     if name.lower() not in taken:
-        return name
+        return name, True
+    if not distinct_person:
+        return taken[name.lower()], False
     i = 2
     while f"{name}_{i}".lower() in taken:
         i += 1
-    return f"{name}_{i}"
+    return f"{name}_{i}", True
 
 
 def listen(audio_path: Optional[str]):
@@ -344,8 +382,17 @@ def listen(audio_path: Optional[str]):
     return heard_card(probe), fact_sheet, probe.get("transcription", "")
 
 
-def enroll(audio_path: Optional[str], raw_name: str, heard_transcription: str):
-    """Enroll the recorded clip under the typed name."""
+def enroll(
+    audio_path: Optional[str],
+    raw_name: str,
+    heard_transcription: str,
+    distinct_person: bool = False,
+):
+    """Enroll the recorded clip under the typed name.
+
+    Re-typing an existing name adds the clip to that person's profile. Tick
+    `distinct_person` only when this really is someone else with the same name.
+    """
     if not audio_path:
         return error_card("Manca l'audio: registra prima di salvare."), gr.update()
 
@@ -354,7 +401,7 @@ def enroll(audio_path: Optional[str], raw_name: str, heard_transcription: str):
         return error_card("Scrivi un nome valido (almeno 2 lettere, senza spazi)."), gr.update()
 
     try:
-        user_id = unique_user_id(name, get_enrolled())
+        user_id, is_new = resolve_user_id(name, get_enrolled(), bool(distinct_person))
         _request(
             "POST",
             "/rag/index",
@@ -363,19 +410,24 @@ def enroll(audio_path: Optional[str], raw_name: str, heard_transcription: str):
             data={"user_ids": [user_id]},
         )
         names = sorted(get_enrolled().keys())
+        clips = clip_counts().get(user_id, 0)
     except BackendError as e:
         return error_card(str(e)), gr.update()
 
-    card = enrolled_card(user_id, (heard_transcription or "").strip(), len(names))
+    card = enrolled_card(user_id, (heard_transcription or "").strip(), len(names), is_new, clips)
     return card, gr.update(choices=names, value=user_id)
 
 
 def seed_enroll(paths: Optional[List[str]], names_csv: str):
-    """Bulk-enroll prepared recordings — one file per colleague.
+    """Bulk-enroll prepared recordings — one name per file, in order.
 
     Used before the doors open to seed the memory with a handful of colleagues
     talking about the same topic, so the first visitor already has a populated
     graph to query.
+
+    Names are taken literally: repeating a name enrolls several clips under one
+    person, which is how you give a colleague a strong voice profile. Use
+    distinct names when you mean distinct people.
     """
     if not paths:
         return "Nessun file selezionato.", gr.update()
@@ -398,7 +450,8 @@ def seed_enroll(paths: Optional[List[str]], names_csv: str):
         if len(name) < 2:
             log.append(f"✗ {raw}: nome non valido, saltato.")
             continue
-        user_id = unique_user_id(name, roster)
+        # Literal: a repeated name deliberately adds another clip to that person.
+        user_id = name
         try:
             _request(
                 "POST",
@@ -741,18 +794,24 @@ def status_line() -> str:
 
 
 def roster_text() -> str:
+    """List the people in memory with how many clips each one has.
+
+    The clip count is the useful number: `/rag/enrolled` de-duplicates by
+    filename, and every mic recording arrives as `0_audio.wav`, so the filename
+    column cannot show that a second clip landed on a profile.
+    """
     try:
         users = get_enrolled()
     except BackendError as e:
         return str(e)
     if not users:
         return "Nessuna persona in memoria."
+    counts = clip_counts()
     lines = [f"Persone in memoria: {len(users)}", "-" * 40]
     for uid, attrs in sorted(users.items()):
-        files = ", ".join(attrs.get("audio_files", []) or [])
-        lines.append(f"👤 {uid}   ({attrs.get('language', '?')})")
-        if files:
-            lines.append(f"    file: {files}")
+        n = counts.get(uid, 0)
+        suffix = "registrazione" if n == 1 else "registrazioni"
+        lines.append(f"👤 {uid}   ({attrs.get('language', '?')})   ·   {n} {suffix}")
     return "\n".join(lines)
 
 
@@ -835,7 +894,14 @@ with gr.Blocks(title="SpeakerRAGent · Maker Faire Rome", fill_width=True) as de
                     enroll_name = gr.Textbox(
                         label="Nome (una parola sola)",
                         placeholder="Giulia",
+                        info="Nome già in memoria = stessa persona: la registrazione "
+                             "si aggiunge al suo profilo vocale.",
                         max_lines=1,
+                    )
+                    enroll_distinct = gr.Checkbox(
+                        value=False,
+                        label="È un'altra persona con lo stesso nome",
+                        info="Spunta solo per un omonimo: verrà creato Nome_2.",
                     )
                     enroll_btn = gr.Button(
                         "🧠 2. Aggiungimi alla memoria", variant="primary", size="lg"
@@ -1013,7 +1079,7 @@ with gr.Blocks(title="SpeakerRAGent · Maker Faire Rome", fill_width=True) as de
     # Enrollment refreshes the speaker picker used by the preset questions.
     enroll_btn.click(
         fn=enroll,
-        inputs=[enroll_audio, enroll_name, heard_state],
+        inputs=[enroll_audio, enroll_name, heard_state, enroll_distinct],
         outputs=[enroll_card, speaker_pick],
     )
 
