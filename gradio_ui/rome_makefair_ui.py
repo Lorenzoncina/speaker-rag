@@ -44,6 +44,8 @@ import base64
 import json
 import os
 import re
+import shutil
+import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
 import gradio as gr
@@ -184,6 +186,116 @@ def _audio_files(paths: List[str], field: str = "audios") -> List[Tuple[str, Tup
 
 
 # ==========================================
+# Long-audio chunking (client side)
+#
+# A long recording must not be sent to /rag/index as one file. Two independent
+# limits bite, and both are silent:
+#
+#   - Titanet (`compute_embeddings`) runs one forward pass over the whole
+#     waveform with no length cap, so activation memory grows with duration.
+#     Measured against this backend: 7 min succeeded, 10 min raised CUDA OOM.
+#     The exception is swallowed, `/rag/index` still answers 200, and nothing
+#     at all is written — the person never reaches the database.
+#   - Voxtral truncates at `max_audio_sec = 180`, so everything past the third
+#     minute is never transcribed even when enrollment "succeeds".
+#
+# Splitting here fixes both: every piece is short enough for Titanet and
+# shorter than Voxtral's cap, so no audio is dropped. It also matches the
+# system's data model — a long recording becomes many retrievable utterances
+# under one speaker rather than one unsearchable blob.
+# ==========================================
+TARGET_SR = 16000       # the rate the backend resamples to anyway, so this is lossless here
+MAX_CHUNK_SEC = 90.0    # half Voxtral's cap, ~5x under the measured Titanet OOM point
+MIN_CHUNK_SEC = 2.0     # drop slivers: too short to embed or transcribe usefully
+SILENCE_TOP_DB = 30     # for librosa.effects.split — cut in pauses, not mid-word
+
+# Above this, the single-speaker path chunks instead of sending one file.
+CHUNK_ABOVE_SEC = MAX_CHUNK_SEC
+
+
+def audio_duration(path: str) -> float:
+    """Duration in seconds, or 0.0 if the header cannot be read."""
+    try:
+        import soundfile as sf
+
+        return float(sf.info(path).duration)
+    except Exception:
+        try:
+            import librosa
+
+            return float(librosa.get_duration(path=path))
+        except Exception:
+            return 0.0
+
+
+def _pack_intervals(intervals, sr: int, max_samples: int, min_samples: int):
+    """Greedily pack non-silent intervals into chunks of at most `max_samples`.
+
+    Cutting on interval boundaries means the splits land in pauses rather than
+    mid-word, which keeps each piece transcribable on its own. An interval that
+    is itself longer than the budget (uninterrupted speech) is hard-cut.
+    """
+    packed: List[Tuple[int, int]] = []
+    start = end = None
+    for s, e in intervals:
+        if start is None:
+            start, end = int(s), int(e)
+        elif int(e) - start <= max_samples:
+            end = int(e)
+        else:
+            packed.append((start, end))
+            start, end = int(s), int(e)
+    if start is not None:
+        packed.append((start, end))
+
+    out: List[Tuple[int, int]] = []
+    for s, e in packed:
+        while e - s > max_samples:
+            out.append((s, s + max_samples))
+            s += max_samples
+        if e - s >= min_samples:
+            out.append((s, e))
+    return out
+
+
+def split_audio(path: str, out_dir: str, max_chunk_sec: float = MAX_CHUNK_SEC) -> List[str]:
+    """Split a recording into <= max_chunk_sec pieces, written as 16 kHz mono WAV.
+
+    Returns the list of chunk paths in order. A recording already short enough
+    is returned unchanged (no re-encode, no temp files).
+
+    Decoding to 16 kHz mono here also shrinks the upload by roughly 6x for a
+    48 kHz stereo source, which matters over the SSH tunnel.
+    """
+    if audio_duration(path) <= max_chunk_sec:
+        return [path]
+
+    import librosa
+    import soundfile as sf
+
+    y, sr = librosa.load(path, sr=TARGET_SR, mono=True)
+    max_samples = int(max_chunk_sec * sr)
+    min_samples = int(MIN_CHUNK_SEC * sr)
+
+    intervals = librosa.effects.split(y, top_db=SILENCE_TOP_DB)
+    if len(intervals) == 0:
+        # No speech detected at all — fall back to fixed-size cuts rather than
+        # dropping the recording, and let the backend report what it hears.
+        intervals = [(s, min(s + max_samples, len(y)))
+                     for s in range(0, len(y), max_samples)]
+
+    spans = _pack_intervals(intervals, sr, max_samples, min_samples)
+    stem = os.path.splitext(os.path.basename(path))[0][:40]
+
+    chunk_paths: List[str] = []
+    for i, (s, e) in enumerate(spans, start=1):
+        chunk_path = os.path.join(out_dir, f"{stem}_part{i:03d}.wav")
+        sf.write(chunk_path, y[s:e], sr, subtype="PCM_16")
+        chunk_paths.append(chunk_path)
+    return chunk_paths
+
+
+# ==========================================
 # Fact-sheet parsing
 #
 # The backend returns the fact sheet as text. These patterns pull out the few
@@ -276,8 +388,13 @@ def error_card(message: str) -> str:
     return _card("⚠️ Problema", f'<div class="booth-body">{message}</div>', "#dc2626")
 
 
-def heard_card(probe: Dict[str, str]) -> str:
-    """The 'this is what I heard' payoff card shown right after recording."""
+def heard_card(probe: Dict[str, str], preview_of: float = 0.0) -> str:
+    """The 'this is what I heard' payoff card shown right after recording.
+
+    `preview_of` is the full duration when only the first chunk was listened
+    to, so the card can say the transcript is a preview rather than the whole
+    recording.
+    """
     transcription = probe.get("transcription") or "(nessun parlato riconosciuto)"
     if probe.get("known"):
         headline = f'✅ Conosco questa voce: <b>{probe["identity"]}</b>'
@@ -293,6 +410,12 @@ def heard_card(probe: Dict[str, str]) -> str:
         + _chip("Tono del testo", probe.get("semantic", "?"), "#0891b2")
         + _chip("Lingua", probe.get("language", "?"), "#64748b")
     )
+    if preview_of:
+        note = (
+            f"Audio lungo ({preview_of / 60.0:.1f} min): qui senti solo i primi "
+            f"{int(MAX_CHUNK_SEC)} secondi. Salvando, <b>tutta</b> la registrazione "
+            f"viene divisa in segmenti e memorizzata per intero.<br>{note}"
+        )
     return _card(
         headline,
         f"""
@@ -305,7 +428,14 @@ def heard_card(probe: Dict[str, str]) -> str:
 
 
 def enrolled_card(
-    user_id: str, transcription: str, n_users: int, is_new: bool, clips: int
+    user_id: str,
+    transcription: str,
+    n_users: int,
+    is_new: bool,
+    clips: int,
+    n_chunks: int = 1,
+    n_indexed: int = 1,
+    duration: float = 0.0,
 ) -> str:
     quote = f'<div class="booth-quote">“{transcription}”</div>' if transcription else ""
     if is_new:
@@ -318,14 +448,29 @@ def enrolled_card(
         title = f"➕ Registrazione aggiunta al profilo di <b>{user_id}</b>"
         body = (
             f"Non è stata creata una nuova persona: questa voce si aggiunge a "
-            f"<b>{user_id}</b>, che ora ha <b>{clips}</b> registrazioni in memoria. "
+            f"<b>{user_id}</b>, che ora ha <b>{clips}</b> frasi in memoria. "
             f"Più campioni = riconoscimento più affidabile."
         )
+
+    split_note = ""
+    if n_chunks > 1:
+        mins = duration / 60.0
+        partial = (
+            f' <span style="color:#b45309">({n_chunks - n_indexed} non salvati)</span>'
+            if n_indexed < n_chunks else ""
+        )
+        split_note = (
+            f'<div class="booth-muted">Audio lungo ({mins:.1f} min): diviso in '
+            f'<b>{n_chunks}</b> segmenti, <b>{n_indexed}</b> salvati{partial}. '
+            f'Ogni segmento è una frase ricercabile a sé.</div>'
+        )
+
     return _card(
         title,
         f"""
         {quote}
         <div class="booth-body">{body}</div>
+        {split_note}
         <div class="booth-muted">Persone in memoria: <b>{n_users}</b> ·
         Guarda il grafo nella scheda <b>🕸️ La memoria</b>.</div>
         """,
@@ -401,20 +546,60 @@ def listen(audio_path: Optional[str]):
     if not audio_path:
         return idle_card("Nessun audio: premi il microfono e registra."), "", ""
 
+    # A long probe would run Titanet over the whole file and hit the same OOM
+    # that breaks enrollment, so preview only the first chunk. This is a
+    # listen-back, not an ingestion — one segment is enough to show the voice
+    # and check whether it is already known.
+    duration = audio_duration(audio_path)
+    tmp_dir = tempfile.mkdtemp(prefix="booth_listen_")
     try:
-        result = _request(
-            "POST",
-            "/rag/retrieve",
-            RETRIEVE_TIMEOUT,
-            files=_audio_files([audio_path]),
-            data={"question": _LISTEN_QUESTION},
-        )
-    except BackendError as e:
-        return error_card(str(e)), "", ""
+        probe_path = audio_path
+        if duration > CHUNK_ABOVE_SEC:
+            try:
+                chunks = split_audio(audio_path, tmp_dir)
+                probe_path = chunks[0] if chunks else audio_path
+            except Exception as e:
+                return error_card(f"Impossibile leggere l'audio: {e}"), "", ""
+
+        try:
+            result = _request(
+                "POST",
+                "/rag/retrieve",
+                RETRIEVE_TIMEOUT,
+                files=_audio_files([probe_path]),
+                data={"question": _LISTEN_QUESTION},
+            )
+        except BackendError as e:
+            return error_card(str(e)), "", ""
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     fact_sheet = result.get("fact_sheet", "")
     probe = parse_probe(fact_sheet)
-    return heard_card(probe), fact_sheet, probe.get("transcription", "")
+    preview = duration > CHUNK_ABOVE_SEC
+    return (
+        heard_card(probe, preview_of=duration if preview else 0.0),
+        fact_sheet,
+        probe.get("transcription", ""),
+    )
+
+
+def _index_one(chunk_path: str, user_id: str) -> int:
+    """POST one audio file to /rag/index. Returns how many records it created.
+
+    The return value is read from the response body, not the status code: when
+    Titanet OOMs, `extract_attributes` swallows the exception and `/rag/index`
+    still answers 200 with `enrolled_users` empty. Trusting the status code is
+    what made a failed enrollment render as a green success card.
+    """
+    result = _request(
+        "POST",
+        "/rag/index",
+        ENROLL_TIMEOUT,
+        files=_audio_files([chunk_path]),
+        data={"user_ids": [user_id]},
+    )
+    return len((result.get("enrolled_users") or {}).get(user_id) or [])
 
 
 def enroll(
@@ -422,10 +607,11 @@ def enroll(
     raw_name: str,
     heard_transcription: str,
     distinct_person: bool = False,
+    progress=gr.Progress(),
 ):
-    """Enroll the recorded clip under the typed name.
+    """Enroll a recording under the typed name, chunking it when it is long.
 
-    Re-typing an existing name adds the clip to that person's profile. Tick
+    Re-typing an existing name adds the recording to that person's profile. Tick
     `distinct_person` only when this really is someone else with the same name.
     """
     if not audio_path:
@@ -435,22 +621,62 @@ def enroll(
     if len(name) < 2:
         return error_card("Scrivi un nome valido (almeno 2 lettere, senza spazi)."), gr.update()
 
+    duration = audio_duration(audio_path)
+    tmp_dir = tempfile.mkdtemp(prefix="booth_chunks_")
     try:
-        user_id, is_new = resolve_user_id(name, get_enrolled(), bool(distinct_person))
-        _request(
-            "POST",
-            "/rag/index",
-            ENROLL_TIMEOUT,
-            files=_audio_files([audio_path]),
-            data={"user_ids": [user_id]},
-        )
-        names = sorted(get_enrolled().keys())
-        clips = clip_counts().get(user_id, 0)
-    except BackendError as e:
-        return error_card(str(e)), gr.update()
+        try:
+            user_id, is_new = resolve_user_id(name, get_enrolled(), bool(distinct_person))
+            chunks = split_audio(audio_path, tmp_dir)
+        except BackendError as e:
+            return error_card(str(e)), gr.update()
+        except Exception as e:
+            return error_card(f"Impossibile leggere o dividere l'audio: {e}"), gr.update()
 
-    card = enrolled_card(user_id, (heard_transcription or "").strip(), len(names), is_new, clips)
-    return card, gr.update(choices=names, value=user_id)
+        n = len(chunks)
+        indexed = 0
+        failures: List[str] = []
+        for i, chunk_path in enumerate(chunks):
+            progress(i / max(n, 1), desc=f"Segmento {i + 1} di {n}…")
+            try:
+                if _index_one(chunk_path, user_id):
+                    indexed += 1
+                else:
+                    # 200 but nothing written — almost always the Titanet OOM.
+                    failures.append(f"segmento {i + 1}: il backend non ha salvato nulla")
+            except BackendError as e:
+                failures.append(f"segmento {i + 1}: {e}")
+
+        if indexed == 0:
+            return (
+                error_card(
+                    "Nessun segmento è stato salvato: <b>la persona non è in memoria</b>.<br>"
+                    + ("<br>".join(failures[:3]) or "Il backend ha risposto senza salvare nulla.")
+                    + "<br><br>Di solito è memoria GPU esaurita. Riprova con un audio più "
+                    "corto, oppure libera la GPU."
+                ),
+                gr.update(),
+            )
+
+        try:
+            names = sorted(get_enrolled().keys())
+            clips = clip_counts().get(user_id, 0)
+        except BackendError:
+            names, clips = [], 0
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    card = enrolled_card(
+        user_id,
+        (heard_transcription or "").strip(),
+        len(names),
+        is_new,
+        clips,
+        n_chunks=n,
+        n_indexed=indexed,
+        duration=duration,
+    )
+    update = gr.update(choices=names, value=user_id) if names else gr.update()
+    return card, update
 
 
 UNKNOWN_CLUSTER_PREFIX = "unknown_"
@@ -623,18 +849,32 @@ def seed_enroll(paths: Optional[List[str]], names_csv: str):
             continue
         # Literal: a repeated name deliberately adds another clip to that person.
         user_id = name
+        tmp_dir = tempfile.mkdtemp(prefix="booth_seed_")
         try:
-            _request(
-                "POST",
-                "/rag/index",
-                ENROLL_TIMEOUT,
-                files=_audio_files([path]),
-                data={"user_ids": [user_id]},
-            )
-            roster[user_id] = {}
-            log.append(f"✓ {os.path.basename(path)} → {user_id}")
-        except BackendError as e:
+            chunks = split_audio(path, tmp_dir)
+            indexed = 0
+            errors: List[str] = []
+            for chunk_path in chunks:
+                try:
+                    if _index_one(chunk_path, user_id):
+                        indexed += 1
+                    else:
+                        errors.append("backend ha risposto senza salvare")
+                except BackendError as e:
+                    errors.append(str(e))
+
+            if indexed:
+                roster[user_id] = {}
+                suffix = f" ({indexed}/{len(chunks)} segmenti)" if len(chunks) > 1 else ""
+                log.append(f"✓ {os.path.basename(path)} → {user_id}{suffix}")
+            else:
+                log.append(
+                    f"✗ {os.path.basename(path)}: nulla salvato — {errors[0] if errors else 'causa ignota'}"
+                )
+        except Exception as e:
             log.append(f"✗ {os.path.basename(path)}: {e}")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     try:
         names = sorted(get_enrolled().keys())
