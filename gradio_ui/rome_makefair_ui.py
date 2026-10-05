@@ -57,6 +57,12 @@ FASTAPI_URL = "http://127.0.0.1:8006"  # fbk server (requires SSH Port Forwardin
 # Enrollment runs Voxtral + Titanet + MiniLM and then flushes the KG extraction
 # queue through Qwen3-14B, so it is the slowest call in the booth by far.
 ENROLL_TIMEOUT = 900
+# A conversation runs diarization, then Voxtral per segment, then KG extraction
+# over every turn — minutes, not seconds, for anything longer than a short clip.
+CONVERSATION_TIMEOUT = 3600
+# Switching to Local blocks until Qwen3-14B is on the GPU: ~30 s from cache,
+# ~10 min the first time the weights come down from HuggingFace.
+MODE_SWITCH_TIMEOUT = 1800
 RETRIEVE_TIMEOUT = 300
 GENERATE_TIMEOUT = 600
 STATUS_TIMEOUT = 10
@@ -73,6 +79,25 @@ VISITOR_SCRIPT = """\
 
 *Esempio: «Ciao, sono Giulia, vengo da Napoli e sto imparando a stampare in 3D
 i pezzi per la mia bicicletta.»*
+
+*Vale anche per un file già registrato di **una sola persona**: caricalo qui e
+dagli un nome.*
+"""
+
+# Enrollment modes shown in the Registrati tab.
+MODE_SINGLE = "👤 Una persona (microfono o file)"
+MODE_CONVERSATION = "👥 Più persone (conversazione registrata)"
+
+CONVERSATION_SCRIPT = """\
+**Carica una registrazione con più parlanti** (una riunione, una chiamata, un'intervista).
+
+Il sistema separa i turni di parola e confronta ogni voce con quelle già in
+memoria: chi è già stato registrato viene **riconosciuto automaticamente**, senza
+scrivere nessun nome.
+
+- Hai una trascrizione **.vtt** (Teams, Meet)? Caricala: nomi e tempi arrivano da
+  lì e la diarizzazione viene saltata.
+- Altrimenti ci pensa la diarizzazione.
 """
 
 
@@ -139,13 +164,23 @@ def generate(prompt: str, max_new_tokens: int = MAX_ANSWER_TOKENS) -> str:
     return (_request("POST", "/llm/generate", GENERATE_TIMEOUT, json=payload).get("text") or "").strip()
 
 
+def _upload(path: str, field: str, mime: str = "audio/wav") -> Tuple[str, Tuple[str, bytes, str]]:
+    """One multipart part, read fully into memory.
+
+    The basename is preserved because the backend writes the upload to a temp
+    file under that name, and the *extension* is what lets ffmpeg/torchaudio
+    decode it — the declared mime type is ignored server-side.
+    """
+    try:
+        with open(path, "rb") as fh:
+            return (field, (os.path.basename(path), fh.read(), mime))
+    except OSError as e:
+        raise BackendError(f"Impossibile leggere il file «{os.path.basename(path)}»: {e.strerror}.") from e
+
+
 def _audio_files(paths: List[str], field: str = "audios") -> List[Tuple[str, Tuple[str, bytes, str]]]:
     """Read audio files into memory so no file handles are left open on the request."""
-    out = []
-    for path in paths:
-        with open(path, "rb") as fh:
-            out.append((field, (os.path.basename(path), fh.read(), "audio/wav")))
-    return out
+    return [_upload(path, field) for path in paths]
 
 
 # ==========================================
@@ -416,6 +451,142 @@ def enroll(
 
     card = enrolled_card(user_id, (heard_transcription or "").strip(), len(names), is_new, clips)
     return card, gr.update(choices=names, value=user_id)
+
+
+UNKNOWN_CLUSTER_PREFIX = "unknown_"
+
+
+def conversation_card(result: Dict[str, Any], source: str) -> str:
+    """Render the outcome of a multi-speaker enrollment.
+
+    `identity_map` maps each diarization cluster to a resolved identity. When a
+    cluster centroid matched an already-enrolled voice the value is that
+    person's user_id — the cross-recording recognition the system is built for.
+    Otherwise it is `unknown_<cluster>`, a new participant.
+    """
+    identity_map = result.get("identity_map", {}) or {}
+    rows = []
+    recognised = 0
+    for cluster, identity in sorted(identity_map.items()):
+        if str(identity).startswith(UNKNOWN_CLUSTER_PREFIX):
+            rows.append(
+                f'<li><code>{cluster}</code> → <b>{identity}</b> '
+                f'<span style="color:#64748b">(nuovo interlocutore)</span></li>'
+            )
+        else:
+            recognised += 1
+            rows.append(
+                f'<li><code>{cluster}</code> → <b>{identity}</b> '
+                f'<span style="color:#16a34a">🎯 riconosciuto dalla memoria</span></li>'
+            )
+
+    headline = (
+        f"🎯 Conversazione registrata — {recognised} voce/i già nota/e"
+        if recognised
+        else "👥 Conversazione registrata"
+    )
+    note = (
+        "Le persone che hanno parlato in questa conversazione sono ora collegate "
+        "fra loro nel grafo (<b>si conoscono</b>)."
+    )
+    return _card(
+        headline,
+        f"""
+        <div class="booth-body">
+          Segmenti aggiunti alla memoria: <b>{result.get('enrolled_segments', 0)}</b><br>
+          Conversazione: <code>{result.get('dialogue_id', '?')}</code> · fonte: {source}
+        </div>
+        <div class="booth-body"><b>Chi ha parlato</b>
+          <ul style="margin:6px 0 0 18px">{''.join(rows) or '<li>nessun interlocutore rilevato</li>'}</ul>
+        </div>
+        <div class="booth-muted">{note}</div>
+        """,
+        "#16a34a",
+    )
+
+
+def enroll_conversation(
+    audio_path: Optional[str],
+    vtt_path: Optional[str],
+    num_speakers: Optional[float],
+    speaker_map_json: str,
+):
+    """Enroll a multi-speaker recording through `/rag/index_conversation`.
+
+    Three backend paths, in the order the endpoint prefers them:
+      - a VTT transcript wins outright: real speaker names and timestamps come
+        from the file and pyannote is skipped;
+      - otherwise a speaker map, if given, names the pyannote clusters;
+      - otherwise full diarization + clustering, with each cluster centroid
+        matched against the enrolled voices.
+    """
+    if not audio_path:
+        return error_card("Carica prima il file audio della conversazione."), gr.update()
+
+    # Validate cheap inputs before reading a possibly large audio file into memory.
+    data: Dict[str, Any] = {}
+    source = "diarizzazione automatica"
+    if vtt_path:
+        source = "trascrizione VTT"
+    else:
+        # Both are ignored by the backend when a VTT is present, so only send
+        # them on the diarization path to keep the request honest.
+        cleaned_map = (speaker_map_json or "").strip()
+        if cleaned_map:
+            try:
+                parsed = json.loads(cleaned_map)
+            except json.JSONDecodeError:
+                return (
+                    error_card(
+                        "La mappa dei parlanti non è JSON valido. "
+                        'Esempio: {"SPEAKER_00": "Abdul", "SPEAKER_01": "Ian"}'
+                    ),
+                    gr.update(),
+                )
+            if not isinstance(parsed, dict):
+                return error_card("La mappa dei parlanti deve essere un oggetto JSON."), gr.update()
+            data["speaker_map"] = cleaned_map
+            source = "mappa dei parlanti"
+        if num_speakers and int(num_speakers) >= 2:
+            data["num_speakers"] = int(num_speakers)
+
+    try:
+        files = [_upload(audio_path, "audio")]
+        if vtt_path:
+            files.append(_upload(vtt_path, "vtt_file", "text/vtt"))
+        result = _request(
+            "POST", "/rag/index_conversation", CONVERSATION_TIMEOUT, files=files, data=data
+        )
+        names = sorted(get_enrolled().keys())
+    except BackendError as e:
+        return error_card(str(e)), gr.update()
+
+    if result.get("enrolled_segments", 0) == 0:
+        return (
+            error_card(
+                "Nessun segmento di parlato trovato nel file. "
+                "Controlla che l'audio contenga voce e sia leggibile."
+            ),
+            gr.update(choices=names),
+        )
+
+    return conversation_card(result, source), gr.update(choices=names)
+
+
+def switch_enroll_mode(mode: str):
+    """Show one enrollment panel at a time and clear the previous result."""
+    single = mode == MODE_SINGLE
+    placeholder = (
+        "Registra un audio per iniziare."
+        if single
+        else "Carica una conversazione per iniziare."
+    )
+    return (
+        gr.update(visible=single),
+        gr.update(visible=not single),
+        idle_card(placeholder),
+        "",
+    )
 
 
 def seed_enroll(paths: Optional[List[str]], names_csv: str):
@@ -793,6 +964,48 @@ def status_line() -> str:
     )
 
 
+def activate_local_mode() -> str:
+    """Load Qwen3-14B on the backend and route KG extraction through it.
+
+    Everything the booth needs depends on this: `/llm/generate` returns 409 in
+    any other mode (so both answer panels stay empty), and `persist()` skips
+    entity extraction when no extractor is available (so the graph never grows
+    past bare speaker nodes).
+
+    The backend blocks until the weights are on the GPU — ~30 s from cache,
+    ~10 min the first time it has to pull them from HuggingFace.
+    """
+    try:
+        _request("POST", "/admin/extractor_mode", MODE_SWITCH_TIMEOUT, json={"mode": "local"})
+    except BackendError as e:
+        return f"🔴 Attivazione fallita.\n{e}"
+    return status_line()
+
+
+def consolidate_memory() -> str:
+    """Flush queued KG extraction and dedupe entities, without enrolling anything.
+
+    Utterances ingested while the extractor was off are flagged
+    `entities_pending` and stay that way until some call persists the graph.
+    `/admin/dedupe_entities` persists at the end of its pass, so it doubles as a
+    way to work through that backlog before the doors open, rather than having
+    it land on the first visitor's enrollment.
+    """
+    try:
+        stats = _request("POST", "/admin/dedupe_entities", CONVERSATION_TIMEOUT, json={})
+    except BackendError as e:
+        return f"🔴 Consolidamento fallito.\n{e}"
+    lines = [
+        "✅ Consolidamento completato.",
+        f"  entità esaminate: {stats.get('candidates_examined', 0)}",
+        f"  entità unite:     {stats.get('entities_merged', 0)}",
+        "",
+        "L'estrazione arretrata è stata eseguita durante il salvataggio del grafo,",
+        "ma non viene riportata qui: controlla la scheda 🕸️ La memoria.",
+    ]
+    return "\n".join(lines)
+
+
 def roster_text() -> str:
     """List the people in memory with how many clips each one has.
 
@@ -881,36 +1094,85 @@ with gr.Blocks(title="SpeakerRAGent · Maker Faire Rome", fill_width=True) as de
 
         # ---------- Tab 1: enrollment ----------
         with gr.Tab("🎙️ Registrati"):
+            enroll_mode = gr.Radio(
+                choices=[MODE_SINGLE, MODE_CONVERSATION],
+                value=MODE_SINGLE,
+                label="Cosa stai registrando?",
+            )
             with gr.Row():
                 with gr.Column(scale=1):
-                    gr.Markdown(VISITOR_SCRIPT)
-                    enroll_audio = gr.Audio(
-                        sources=["microphone", "upload"],
-                        type="filepath",
-                        format="wav",
-                        label="La tua registrazione",
-                    )
-                    listen_btn = gr.Button("🔍 1. Ascolta", variant="secondary", size="lg")
-                    enroll_name = gr.Textbox(
-                        label="Nome (una parola sola)",
-                        placeholder="Giulia",
-                        info="Nome già in memoria = stessa persona: la registrazione "
-                             "si aggiunge al suo profilo vocale.",
-                        max_lines=1,
-                    )
-                    enroll_distinct = gr.Checkbox(
-                        value=False,
-                        label="È un'altra persona con lo stesso nome",
-                        info="Spunta solo per un omonimo: verrà creato Nome_2.",
-                    )
-                    enroll_btn = gr.Button(
-                        "🧠 2. Aggiungimi alla memoria", variant="primary", size="lg"
-                    )
+
+                    # --- Mode A: one speaker, from the mic or from a file ---
+                    with gr.Group(visible=True) as single_group:
+                        gr.Markdown(VISITOR_SCRIPT)
+                        enroll_audio = gr.Audio(
+                            sources=["microphone", "upload"],
+                            type="filepath",
+                            format="wav",
+                            label="Registrazione dal microfono, oppure carica un file",
+                        )
+                        listen_btn = gr.Button("🔍 1. Ascolta", variant="secondary", size="lg")
+                        enroll_name = gr.Textbox(
+                            label="Nome (una parola sola)",
+                            placeholder="Giulia",
+                            info="Nome già in memoria = stessa persona: la registrazione "
+                                 "si aggiunge al suo profilo vocale.",
+                            max_lines=1,
+                        )
+                        enroll_distinct = gr.Checkbox(
+                            value=False,
+                            label="È un'altra persona con lo stesso nome",
+                            info="Spunta solo per un omonimo: verrà creato Nome_2.",
+                        )
+                        enroll_btn = gr.Button(
+                            "🧠 2. Aggiungimi alla memoria", variant="primary", size="lg"
+                        )
+
+                    # --- Mode B: a multi-speaker recording ---
+                    with gr.Group(visible=False) as conversation_group:
+                        gr.Markdown(CONVERSATION_SCRIPT)
+                        conv_audio = gr.File(
+                            label="File audio della conversazione",
+                            file_count="single",
+                            type="filepath",
+                        )
+                        conv_vtt = gr.File(
+                            label="Trascrizione .vtt (facoltativa — es. da Teams)",
+                            file_count="single",
+                            type="filepath",
+                        )
+                        with gr.Accordion("Opzioni per la diarizzazione", open=False):
+                            gr.Markdown(
+                                "Usate **solo** quando non carichi un file VTT: con il VTT "
+                                "i nomi e i tempi arrivano già dalla trascrizione."
+                            )
+                            conv_num_speakers = gr.Number(
+                                label="Quanti parlanti (facoltativo)",
+                                value=None,
+                                precision=0,
+                                info="Lascia vuoto per farlo stimare al sistema.",
+                            )
+                            conv_speaker_map = gr.Textbox(
+                                label="Nomi dei parlanti (JSON, facoltativo)",
+                                placeholder='{"SPEAKER_00": "Abdul", "SPEAKER_01": "Ian"}',
+                                max_lines=3,
+                            )
+                        conv_btn = gr.Button(
+                            "👥 Aggiungi la conversazione alla memoria",
+                            variant="primary",
+                            size="lg",
+                        )
+
                 with gr.Column(scale=1):
                     enroll_card = gr.HTML(value=idle_card())
                     with gr.Accordion("🔬 Fact sheet (vista tecnica)", open=False):
                         enroll_sheet = gr.Textbox(label="", lines=16, buttons=["copy"])
 
+            enroll_mode.change(
+                fn=switch_enroll_mode,
+                inputs=[enroll_mode],
+                outputs=[single_group, conversation_group, enroll_card, enroll_sheet],
+            )
             listen_btn.click(
                 fn=listen,
                 inputs=[enroll_audio],
@@ -1032,7 +1294,26 @@ with gr.Blocks(title="SpeakerRAGent · Maker Faire Rome", fill_width=True) as de
                 with gr.Column():
                     gr.Markdown("### Stato")
                     admin_status = gr.Textbox(label="", lines=3, interactive=False)
-                    admin_refresh = gr.Button("🔄 Aggiorna stato", variant="secondary")
+                    with gr.Row():
+                        admin_refresh = gr.Button("🔄 Aggiorna stato", variant="secondary")
+                        admin_local_btn = gr.Button(
+                            "🟢 Attiva Qwen3-14B locale", variant="primary"
+                        )
+                    gr.Markdown(
+                        "Senza la modalità Local il backend non risponde a `/llm/generate` "
+                        "(le due risposte restano vuote) e non estrae entità, quindi il grafo "
+                        "resta fermo ai soli nodi delle persone. L'attivazione carica i pesi "
+                        "sulla GPU: ~30 s se già in cache."
+                    )
+                    admin_consolidate_btn = gr.Button(
+                        "🧩 Consolida la memoria (recupera l'arretrato)", variant="secondary"
+                    )
+                    gr.Markdown(
+                        "Le registrazioni fatte con l'estrattore spento restano in coda. "
+                        "Premi qui **dopo** l'attivazione per smaltirle tutte insieme, invece "
+                        "di farle ricadere sulla prima registrazione di un visitatore."
+                    )
+                    admin_consolidate_log = gr.Textbox(label="", lines=7, interactive=False)
                     gr.Markdown("### Persone in memoria")
                     admin_roster = gr.Textbox(label="", lines=14, interactive=False)
                     roster_btn = gr.Button("👥 Mostra elenco", variant="secondary")
@@ -1064,6 +1345,12 @@ with gr.Blocks(title="SpeakerRAGent · Maker Faire Rome", fill_width=True) as de
                     clear_log = gr.Textbox(label="", lines=2, interactive=False)
 
             admin_refresh.click(fn=status_line, inputs=[], outputs=[admin_status])
+            admin_local_btn.click(
+                fn=activate_local_mode, inputs=[], outputs=[admin_status]
+            ).then(fn=status_line, inputs=[], outputs=[status_box])
+            admin_consolidate_btn.click(
+                fn=consolidate_memory, inputs=[], outputs=[admin_consolidate_log]
+            )
             roster_btn.click(fn=roster_text, inputs=[], outputs=[admin_roster])
             seed_btn.click(
                 fn=seed_enroll,
@@ -1080,6 +1367,11 @@ with gr.Blocks(title="SpeakerRAGent · Maker Faire Rome", fill_width=True) as de
     enroll_btn.click(
         fn=enroll,
         inputs=[enroll_audio, enroll_name, heard_state, enroll_distinct],
+        outputs=[enroll_card, speaker_pick],
+    )
+    conv_btn.click(
+        fn=enroll_conversation,
+        inputs=[conv_audio, conv_vtt, conv_num_speakers, conv_speaker_map],
         outputs=[enroll_card, speaker_pick],
     )
 
